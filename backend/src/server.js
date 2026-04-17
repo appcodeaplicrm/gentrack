@@ -18,6 +18,7 @@ import alertasRouter from './routes/alertas.js'
 import usuariosRouter from './routes/usuarios.js';
 
 import { verificarToken } from './middleware/auth.js';
+import { verificarTokenOApiKey } from './middleware/authFlexible.js';
 
 import job from "./config/cron.js"
 

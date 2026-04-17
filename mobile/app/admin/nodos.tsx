@@ -60,6 +60,7 @@ export default function AdminNodos() {
                 : await fetchConAuth(`${API_URL}/api/nodos`,                     { method: 'POST', body: JSON.stringify(body) });
             const json = await res.json();
             if (!res.ok) throw new Error(json.error);
+            Alert.alert('Info', json.data)
             setModal(false);
             await cargar();
         } catch (err: any) { Alert.alert('Error', err.message); }
