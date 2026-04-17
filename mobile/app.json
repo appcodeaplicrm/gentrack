@@ -24,7 +24,7 @@
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "package": "com.zchalan.mobile",
+      "package": "com.appcode.mobile",
       "googleServicesFile": "./google-services.json"
     },
     "web": {
@@ -54,8 +54,9 @@
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "243f5b59-d5bb-440a-a4d0-fbf59c08f14f"
+        "projectId": "4c9a7ab7-1de0-43ac-8b83-eeb4b7a3561c"
       }
-    }
+    },
+    "owner": "appcodeaplicrm"
   }
 }

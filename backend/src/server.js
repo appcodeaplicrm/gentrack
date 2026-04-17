@@ -39,18 +39,18 @@ app.get('/health', (req, res) => {
 app.use('/api/auth', authRouter);
 
 // Rutas protegidas — requieren token
-app.use('/api/generadores',    verificarToken, generadoresRouter);
+app.use('/api/generadores',    verificarTokenOApiKey, generadoresRouter);
 app.use('/api/sesiones', sesionesRouter); // No le ponemos VerificarToken porque dejamos que cada ruta use su propio middleware debido a que en ciertas rutas debemos usar el endpoint del apiKey
-app.use('/api/mantenimientos', verificarToken, mantenimientosRouter);
-app.use('/api/eventos',        verificarToken, eventosRouter);
-app.use('/api/reportes',       verificarToken, reportesRouter);
-app.use('/api/dashboard',      verificarToken, dashboardRouter);
-app.use('/api/nodos',          verificarToken, nodosRouter);
-app.use('/api/modelos',        verificarToken, modelosRouter);
-app.use('/api/cloudinary',     verificarToken, cloudinaryRouter);
-app.use('/api/push-tokens',    verificarToken, pushTokensRouter);
-app.use('/api/alertas',        verificarToken, alertasRouter);
-app.use('/api/usuarios',       verificarToken, usuariosRouter);
+app.use('/api/mantenimientos', verificarTokenOApiKey, mantenimientosRouter);
+app.use('/api/eventos',        verificarTokenOApiKey, eventosRouter);
+app.use('/api/reportes',       verificarTokenOApiKey, reportesRouter);
+app.use('/api/dashboard',      verificarTokenOApiKey, dashboardRouter);
+app.use('/api/nodos',          verificarTokenOApiKey, nodosRouter);
+app.use('/api/modelos',        verificarTokenOApiKey, modelosRouter);
+app.use('/api/cloudinary',     verificarTokenOApiKey, cloudinaryRouter);
+app.use('/api/push-tokens',    verificarTokenOApiKey, pushTokensRouter);
+app.use('/api/alertas',        verificarTokenOApiKey, alertasRouter);
+app.use('/api/usuarios',       verificarTokenOApiKey, usuariosRouter);
 
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`GenTrack API corriendo en puerto ${PORT}`);
