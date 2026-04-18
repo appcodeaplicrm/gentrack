@@ -23,27 +23,46 @@ const TabIcon = ({ name, focused, badge }: { name: any; focused: boolean; badge?
 );
 
 export default function TabsLayout() {
-    const { noLeidas } = useData(); // ← usa DataProvider, sin fetch propio
+    const { noLeidas, mantenimientos } = useData();
+    
+    // Filtramos los críticos para el badge
+    const criticos = mantenimientos?.filter(m => m.prioridad === 'alta').length || 0;
 
     return (
         <Tabs
             screenOptions={{
-                headerShown:     false,
+                headerShown: false,
                 tabBarShowLabel: false,
-                animation:       'fade',
-                tabBarStyle:     styles.tabBar,
+                animation: 'fade',
+                tabBarStyle: styles.tabBar,
                 tabBarItemStyle: styles.tabItem,
             }}
         >
-            <Tabs.Screen name="dashboard"   options={{ tabBarIcon: ({ focused }) => <TabIcon name="grid-outline"          focused={focused} /> }} />
-            <Tabs.Screen name="generadores" options={{ tabBarIcon: ({ focused }) => <TabIcon name="menu-outline"          focused={focused} /> }} />
-            <Tabs.Screen name="activos"     options={{ tabBarIcon: ({ focused }) => <TabIcon name="flash-outline"         focused={focused} /> }} />
-            <Tabs.Screen name="alerts"      options={{ tabBarIcon: ({ focused }) => <TabIcon name="notifications-outline" focused={focused} badge={noLeidas} /> }} />
-            <Tabs.Screen name="settings"    options={{ tabBarIcon: ({ focused }) => <TabIcon name="settings-outline"      focused={focused} /> }} />
+            <Tabs.Screen name="dashboard" options={{ tabBarIcon: ({ focused }) => <TabIcon name="grid-outline" focused={focused} /> }} />
+            <Tabs.Screen name="generadores" options={{ tabBarIcon: ({ focused }) => <TabIcon name="menu-outline" focused={focused} /> }} />
+
+            <Tabs.Screen name="activos" options={{ tabBarIcon: ({ focused }) => <TabIcon name="flash-outline" focused={focused} /> }} />
+            
+            <Tabs.Screen 
+                name="mantenimientos" 
+                options={{ 
+                    tabBarIcon: ({ focused }) => (
+                        <TabIcon 
+                            name={focused ? "construct" : "construct-outline"} 
+                            focused={focused} 
+                            badge={criticos} 
+                        />
+                    ) 
+                }} 
+            />
+
+            {/* Oculto de la barra pero accesible */}
+            <Tabs.Screen name="alerts" options={{ href: null, tabBarIcon: ({ focused }) => <TabIcon name="notifications-outline" focused={focused} badge={noLeidas} /> }} />
+            
+            <Tabs.Screen name="settings" options={{ tabBarIcon: ({ focused }) => <TabIcon name="settings-outline" focused={focused} /> }} />
         </Tabs>
     );
 }
-
 const styles = StyleSheet.create({
     tabBar: {
         position: 'absolute', bottom: 20, left: 20, right: 20,

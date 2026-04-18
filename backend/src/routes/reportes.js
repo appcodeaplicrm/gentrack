@@ -23,6 +23,39 @@ const segsATexto = (segs) => {
     return `${h}h ${m}m`;
 };
 
+// ── GET todos los reportes globales ─────────────────────────────────────────
+router.get('/', verificarToken, async (req, res) => {
+    try {
+        const { tipo } = req.query; // 'gasolina' | 'aceite' | 'mantenimiento'
+
+        const rows = await db
+            .select({
+                idReporte:    schema.reportes.idReporte,
+                tipo:         schema.reportes.tipo,
+                desde:        schema.reportes.desde,
+                hasta:        schema.reportes.hasta,
+                generadoEn:   schema.reportes.generadoEn,
+                idGenerador:  schema.reportes.idGenerador,
+                nombreNodo:   schema.nodos.nombre,
+                ubicacion:    schema.nodos.ubicacion,
+                genId:        schema.generadores.genId,
+                nombreUsuario: schema.usuarios.nombre,
+            })
+            .from(schema.reportes)
+            .innerJoin(schema.generadores, eq(schema.reportes.idGenerador, schema.generadores.idGenerador))
+            .innerJoin(schema.nodos,       eq(schema.generadores.idNodo,   schema.nodos.idNodo))
+            .leftJoin(schema.usuarios,     eq(schema.reportes.idUsuario,   schema.usuarios.idUsuario))
+            .where(tipo ? eq(schema.reportes.tipo, tipo) : undefined)
+            .orderBy(desc(schema.reportes.generadoEn));
+
+        res.status(200).json({ success: true, data: rows });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ success: false, error: 'Error al obtener reportes' });
+    }
+});
+
+
 // ── GET todos los reportes de un generador ───────────────────────────────────
 router.get('/:idGenerador', verificarToken, async (req, res) => {
     try {

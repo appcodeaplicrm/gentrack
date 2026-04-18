@@ -7,6 +7,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useAuth } from '@/provider/AuthProvider';
 import { COLORS } from '@/assets/styles/colors';
+import ApiKeyModal from '../../components/ApiKeyModal';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -31,6 +32,8 @@ export default function AdminNodos() {
     const [form,      setForm]      = useState(FORM_VACIO);
     const [guardando, setGuardando] = useState(false);
     const [busqueda,  setBusqueda]  = useState('');
+    const [apiKeyModal, setApiKeyModal] = useState<{ visible: boolean; key: string }>({ visible: false, key: '' });
+
 
     const cargar = async () => {
         try {
@@ -55,14 +58,18 @@ export default function AdminNodos() {
         setGuardando(true);
         try {
             const body = { nombre: form.nombre, ubicacion: form.ubicacion, descripcion: form.descripcion || null };
-            const res  = editando
-                ? await fetchConAuth(`${API_URL}/api/nodos/${editando.idNodo}`, { method: 'PUT',  body: JSON.stringify(body) })
-                : await fetchConAuth(`${API_URL}/api/nodos`,                     { method: 'POST', body: JSON.stringify(body) });
+            const res = editando
+            ? await fetchConAuth(`${API_URL}/api/nodos/${editando.idNodo}`, { method: 'PUT',  body: JSON.stringify(body) })
+            : await fetchConAuth(`${API_URL}/api/nodos`,                     { method: 'POST', body: JSON.stringify(body) });
             const json = await res.json();
             if (!res.ok) throw new Error(json.error);
-            Alert.alert('Info', json.data)
+
             setModal(false);
             await cargar();
+
+            if (json.apiKey) {
+            setApiKeyModal({ visible: true, key: json.apiKey });
+            }
         } catch (err: any) { Alert.alert('Error', err.message); }
         finally { setGuardando(false); }
     };
@@ -208,6 +215,12 @@ export default function AdminNodos() {
                     </View>
                 </View>
             </Modal>
+
+            <ApiKeyModal
+                visible={apiKeyModal.visible}
+                apiKey={apiKeyModal.key}
+                onClose={() => setApiKeyModal({ visible: false, key: '' })}
+                />
         </View>
     );
 }

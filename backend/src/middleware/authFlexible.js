@@ -14,6 +14,6 @@ export const verificarTokenOApiKey = async (req, res, next) => {
     }
 
     // Si no, es JWT de usuario
-    console.log("Fue pa ca")
+    //console.log("Fue pa ca")
     return verificarToken(req, res, next);
 };

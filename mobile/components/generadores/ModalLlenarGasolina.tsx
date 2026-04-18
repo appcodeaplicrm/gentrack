@@ -98,6 +98,12 @@ export function ModalLlenarGasolina({ visible, horasTotales, gasolinaActual, cap
         }
     };
 
+    const segundosAHorasMinutos = (seg: number) => {
+        const horas = Math.floor(seg / 3600);
+        const minutos = Math.floor((seg % 3600) / 60);
+        return `${horas}:${minutos.toString().padStart(2, '0')}`;
+    };
+
     return (
         <Modal visible={visible} transparent animationType="slide">
         <View style={s.overlay}>

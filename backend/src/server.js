@@ -13,6 +13,8 @@ import nodosRouter   from './routes/nodos.js';
 import modelosRouter from './routes/modelos.js';
 import cloudinaryRouter from './routes/cloudinary.js';
 import { iniciarMonitoreoGasolina } from './services/gasolina.js';
+import { iniciarPollingMantenimientos } from './services/mantenimientos.js'
+import { iniciarPollingCorrida } from './services/limite_corriendo.js'
 import pushTokensRouter from './routes/pushTokens.js';
 import alertasRouter from './routes/alertas.js'
 import usuariosRouter from './routes/usuarios.js';
@@ -56,4 +58,6 @@ app.use('/api/usuarios',       verificarTokenOApiKey, usuariosRouter);
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`GenTrack API corriendo en puerto ${PORT}`);
     iniciarMonitoreoGasolina();
+    iniciarPollingMantenimientos(); 
+    iniciarPollingCorrida()
 });

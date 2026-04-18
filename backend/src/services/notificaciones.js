@@ -18,6 +18,8 @@ export const NOTIF = {
     GASOLINA_BAJA:               'gasolina_baja',
     GASOLINA_AGOTADA:            'gasolina_agotada',
     ACEITE_VENCIDO:              'aceite_vencido',
+    MANTENIMIENTO_PENDIENTE:     'mantenimiento_pendiente',
+    LIMITE_CORRIENDO:              'limite_corriendo',
 };
 
 // Configuración de cada tipo
@@ -98,6 +100,20 @@ const CONFIG = {
         prioridad: 'high',
         severidad: 'critica',
         guardarAlerta: true,
+    },
+    [NOTIF.MANTENIMIENTO_PENDIENTE]: {
+        titulo:        (d) => d.titulo || `${d.genId} — Mantenimiento requerido`,
+        cuerpo:        (d) => d.mensaje || `Se requiere mantenimiento de ${d.tipo} en ${d.genId}`,
+        prioridad:     'high',
+        severidad:     'advertencia',
+        guardarAlerta: true,
+    },
+    [NOTIF.CORRIDA_EXCESIVA]: {
+        titulo:        (d) => `${d.genId} — Operación prolongada`,
+        cuerpo:        (d) => `El generador lleva ${d.horasCorriendo}h corriendo sin descanso. Debe apagarse para descansar.`,
+        prioridad:     'high',
+        severidad:     'critica',
+        guardarAlerta: false,
     },
 };
 

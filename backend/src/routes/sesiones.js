@@ -30,6 +30,7 @@ router.post('/encender', verificarTokenOApiKey, async (req, res) => {
 
         const idUsuario = req.usuario?.idUsuario || null;
         const idApiKey  = req.apiKey?.idApiKey   || null;
+        const limiteCorridaEn = new Date(ahora.getTime() + 6 * 60 * 60 * 1000);
 
         const genData = await db.select({
             gasolinaActualLitros: schema.generadores.gasolinaActualLitros,
@@ -57,6 +58,7 @@ router.post('/encender', verificarTokenOApiKey, async (req, res) => {
                 estado:           'corriendo',
                 encendidoEn:      ahora,
                 gasolinaSeAcabaEn,
+                limiteCorridaEn,
                 updatedAt:        ahora,
             })
             .where(eq(schema.generadores.idGenerador, idGenerador));

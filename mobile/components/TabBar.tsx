@@ -5,11 +5,11 @@ import { COLORS } from '@/assets/styles/colors';
 import { useData } from '@/provider/DataProvider';
 
 const TABS = [
-    { name: 'dashboard',   icon: 'grid-outline',          route: '/(tabs)/dashboard'   },
-    { name: 'generadores', icon: 'menu-outline',          route: '/(tabs)/generadores' },
-    { name: 'activos',     icon: 'flash-outline',         route: '/(tabs)/activos'     },
-    { name: 'alerts',      icon: 'notifications-outline', route: '/(tabs)/alerts'      },
-    { name: 'settings',    icon: 'settings-outline',      route: '/(tabs)/settings'    },
+    { name: 'dashboard',   icon: 'grid-outline',      route: '/(tabs)/dashboard'    },
+    { name: 'generadores', icon: 'menu-outline',      route: '/(tabs)/generadores'  },
+    { name: 'mantenimientos', icon: 'construct-outline', route: '/(tabs)/mantenimientos' }, // Agregado
+    { name: 'activos',     icon: 'flash-outline',     route: '/(tabs)/activos'      },
+    { name: 'settings',    icon: 'settings-outline',  route: '/(tabs)/settings'     },
 ];
 
 const TabIcon = ({ name, focused, badge }: { name: any; focused: boolean; badge?: number }) => (
@@ -31,16 +31,23 @@ const TabIcon = ({ name, focused, badge }: { name: any; focused: boolean; badge?
 );
 
 export function TabBar() {
-    const router   = useRouter();
+    const router = useRouter();
     const pathname = usePathname();
-    const { noLeidas } = useData();  // ← solo esto, sin fetch propio
+    const { noLeidas, mantenimientos } = useData(); 
+
+    const criticos = mantenimientos?.filter(m => m.prioridad === 'alta').length || 0;
 
     return (
         <View style={s.tabBar}>
             {TABS.map(tab => {
-                const focused =
-                    pathname.includes(tab.name) ||
-                    (tab.name === 'generadores' && pathname.includes('/generador/'));
+                const isManto = tab.name === 'mantenimientos';
+                const focused = pathname.includes(tab.name) || 
+                                (tab.name === 'generadores' && pathname.includes('/generador/'));
+
+                // Decidir qué badge mostrar
+                let currentBadge = undefined;
+                if (tab.name === 'alerts') currentBadge = noLeidas;
+                if (tab.name === 'mantenimientos') currentBadge = criticos;
 
                 return (
                     <TouchableOpacity
@@ -50,9 +57,9 @@ export function TabBar() {
                         activeOpacity={0.7}
                     >
                         <TabIcon
-                            name={tab.icon}
+                            name={focused && isManto ? 'construct' : tab.icon}
                             focused={focused}
-                            badge={tab.name === 'alerts' ? noLeidas : undefined}
+                            badge={currentBadge}
                         />
                     </TouchableOpacity>
                 );

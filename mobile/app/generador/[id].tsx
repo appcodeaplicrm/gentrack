@@ -55,10 +55,10 @@ const calcularGasolina = (
 };
 
 export default function GeneradorDetalle() {
-    const { id }              = useLocalSearchParams<{ id: string }>();
-    const router              = useRouter();
-    const { fetchConAuth }    = useAuth();
-    const { recargar }        = useData(); // ← único agregado
+    const { id }           = useLocalSearchParams<{ id: string }>();
+    const router           = useRouter();
+    const { fetchConAuth } = useAuth();
+    const { recargar }     = useData();
 
     const [generador,      setGenerador]      = useState<Generador | null>(null);
     const [loading,        setLoading]        = useState(true);
@@ -68,9 +68,17 @@ export default function GeneradorDetalle() {
     const [alertaGasolina, setAlertaGasolina] = useState(false);
     const [modalAceite,    setModalAceite]    = useState(false);
     const [modalGasolina,  setModalGasolina]  = useState(false);
+    const [segundosTotalesActuales, setSegundosTotalesActuales] = useState(0);
+    const [horasParaModal, setHorasParaModal] = useState(0);
+
     const timerRef         = useRef<ReturnType<typeof setInterval> | null>(null);
     const alertaLanzadaRef = useRef(false);
     const congeladoRef     = useRef(false);
+    const generadorRef     = useRef<Generador | null>(null);
+
+    useEffect(() => {
+        generadorRef.current = generador;
+    }, [generador]);
 
     const cargar = async () => {
         try {
@@ -104,26 +112,48 @@ export default function GeneradorDetalle() {
         }
         const corriendo = generador.estado === 'corriendo';
         if (corriendo && generador.encendidoEn) {
-            iniciarTimer(generador);
+            iniciarTimer();
         } else {
             if (!congeladoRef.current) {
                 setHorasActivo(calcularHoras(generador.horasTotales, null));
             }
+            setSegundosTotalesActuales(generador.horasTotales);
             setGasolinaActual(parseFloat(generador.gasolinaActualLitros));
         }
         return () => { if (timerRef.current) clearInterval(timerRef.current); };
     }, [generador]);
 
-    const iniciarTimer = (gen: Generador) => {
+    const getSegundosReales = (): number => {
+        const gen = generadorRef.current;
+        if (!gen) return 0;
+        if (gen.estado === 'corriendo' && gen.encendidoEn) {
+            const sesionSegundos = Math.floor((Date.now() - new Date(gen.encendidoEn).getTime()) / 1000);
+            return gen.horasTotales + sesionSegundos;
+        }
+        return gen.horasTotales;
+    };
+
+    const iniciarTimer = () => {
         if (timerRef.current) clearInterval(timerRef.current);
+
         timerRef.current = setInterval(() => {
+            const gen = generadorRef.current;
+            if (!gen || !gen.encendidoEn) return;
+
+            const sesionMs       = Math.max(0, Date.now() - new Date(gen.encendidoEn).getTime());
+            const sesionSegundos = Math.floor(sesionMs / 1000);
+            const totalSegundos = Math.floor(gen.horasTotales) + sesionSegundos;
+
+            setSegundosTotalesActuales(totalSegundos);
             setHorasActivo(calcularHoras(gen.horasTotales, gen.encendidoEn));
+
             const nuevaGasolina = calcularGasolina(
                 parseFloat(gen.gasolinaActualLitros),
                 parseFloat(gen.consumoGasolinaHoras),
                 gen.encendidoEn
             );
             setGasolinaActual(nuevaGasolina);
+
             if (nuevaGasolina <= 0 && !alertaLanzadaRef.current) {
                 alertaLanzadaRef.current = true;
                 setAlertaGasolina(true);
@@ -161,15 +191,15 @@ export default function GeneradorDetalle() {
                                     encendidoEn: new Date().toISOString(),
                                 };
                                 setGenerador(nuevo);
-                                iniciarTimer(nuevo);
+                                iniciarTimer();
                             } else {
                                 if (timerRef.current) {
                                     clearInterval(timerRef.current);
                                     timerRef.current = null;
                                 }
-                                const ahora            = Date.now();
-                                const inicio           = new Date(generador.encendidoEn!).getTime();
-                                const sesionSegundos   = Math.floor((ahora - inicio) / 1000);
+                                const ahora              = Date.now();
+                                const inicio             = new Date(generador.encendidoEn!).getTime();
+                                const sesionSegundos     = Math.floor((ahora - inicio) / 1000);
                                 const nuevasHorasTotales = generador.horasTotales + sesionSegundos;
                                 setGenerador(prev => prev
                                     ? { ...prev, estado: 'apagado', encendidoEn: null, horasTotales: nuevasHorasTotales }
@@ -185,7 +215,6 @@ export default function GeneradorDetalle() {
                             const json = await res.json();
                             if (!res.ok) throw new Error(json.error);
 
-                            // ← Notifica a todas las tabs
                             await Promise.all([cargar(), recargar('generadores')]);
                         } catch (err: any) {
                             await cargar();
@@ -206,7 +235,7 @@ export default function GeneradorDetalle() {
             body:   JSON.stringify({
                 idGenerador:    generador.idGenerador,
                 tipo:           'aceite',
-                horasAlMomento: generador.horasTotales,
+                horasAlMomento: getSegundosReales(),
                 imagenUrl:      data.imagenUrl,
                 notas:          data.notas,
             }),
@@ -214,7 +243,7 @@ export default function GeneradorDetalle() {
         const json = await res.json();
         if (!res.ok) throw new Error(json.error);
         setModalAceite(false);
-        await Promise.all([cargar(), recargar('all')]); // ← alertas también pueden cambiar
+        await Promise.all([cargar(), recargar('all')]);
         Alert.alert('Listo', 'Cambio de aceite registrado');
     };
 
@@ -225,7 +254,7 @@ export default function GeneradorDetalle() {
             body:   JSON.stringify({
                 idGenerador:             generador.idGenerador,
                 tipo:                    'gasolina',
-                horasAlMomento:          generador.horasTotales,
+                horasAlMomento:          getSegundosReales(),
                 gasolinaLitrosAlMomento: gasolinaActual,
                 cantidadLitros:          data.litros,
                 imagenUrl:               data.imagenUrl,
@@ -235,11 +264,10 @@ export default function GeneradorDetalle() {
         const json = await res.json();
         if (!res.ok) throw new Error(json.error);
         setModalGasolina(false);
-        await Promise.all([cargar(), recargar('all')]); // ← alertas también pueden cambiar
+        await Promise.all([cargar(), recargar('all')]);
         Alert.alert('Listo', 'Carga de gasolina registrada');
     };
 
-    // ── Render (igual que antes, sin cambios) ────────────────────
     if (loading) {
         return (
             <View style={styles.fullCenter}>
@@ -331,10 +359,10 @@ export default function GeneradorDetalle() {
 
                 <View style={styles.grid}>
                     {[
-                        { icon: 'location-outline',      label: 'Location',         value: generador.nodo,                                                                    color: COLORS.primaryBright },
-                        { icon: 'hardware-chip-outline', label: 'Modelo',           value: generador.modelo,                                                                  color: COLORS.textSecondary },
-                        { icon: 'water-outline',         label: 'Cambio de aceite', value: `En ${proximoAceite.toFixed(0)} horas`,                                           color: '#c8e06a' },
-                        { icon: 'flash-outline',         label: 'Próxima recarga',  value: sinGasolina ? 'Recarga necesaria' : `En ${proximaRecarga.toFixed(1)} horas`,      color: sinGasolina ? '#ff4757' : COLORS.primaryBright },
+                        { icon: 'location-outline',      label: 'Location',         value: generador.nodo,                                                               color: COLORS.primaryBright },
+                        { icon: 'hardware-chip-outline', label: 'Modelo',           value: generador.modelo,                                                             color: COLORS.textSecondary },
+                        { icon: 'water-outline',         label: 'Cambio de aceite', value: `En ${proximoAceite.toFixed(0)} horas`,                                      color: '#c8e06a' },
+                        { icon: 'flash-outline',         label: 'Próxima recarga',  value: sinGasolina ? 'Recarga necesaria' : `En ${proximaRecarga.toFixed(1)} horas`, color: sinGasolina ? '#ff4757' : COLORS.primaryBright },
                     ].map((item, i) => (
                         <View key={i} style={styles.gridItem}>
                             <Ionicons name={item.icon as any} size={14} color={item.color} />
@@ -393,7 +421,14 @@ export default function GeneradorDetalle() {
                     </View>
 
                     <View style={styles.acciones}>
-                        <TouchableOpacity style={[styles.accionBtn, { borderColor: accionBorder }]} onPress={() => setModalAceite(true)} activeOpacity={0.8}>
+                        <TouchableOpacity
+                            style={[styles.accionBtn, { borderColor: accionBorder }]}
+                            onPress={() => {
+                                setHorasParaModal(segundosTotalesActuales);
+                                setModalAceite(true);
+                            }}
+                            activeOpacity={0.8}
+                        >
                             <LinearGradient colors={accionColors} style={styles.accionGradient}>
                                 <Ionicons name="water-outline" size={18} color={accionColor} />
                                 <Text style={[styles.accionText, { color: accionColor }]}>Cambio de aceite</Text>
@@ -447,14 +482,14 @@ export default function GeneradorDetalle() {
 
             <ModalCambioAceite
                 visible={modalAceite}
-                horasTotales={generador.horasTotales / 3600}
+                horasTotales={horasParaModal}
                 onClose={() => setModalAceite(false)}
                 onConfirmar={handleRegistrarAceite}
                 fetchConAuth={fetchConAuth}
             />
             <ModalLlenarGasolina
                 visible={modalGasolina}
-                horasTotales={generador.horasTotales / 3600}
+                horasTotales={segundosTotalesActuales}
                 gasolinaActual={gasolinaActual}
                 capacidad={capacidad}
                 onClose={() => setModalGasolina(false)}

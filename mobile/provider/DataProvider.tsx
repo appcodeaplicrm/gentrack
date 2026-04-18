@@ -5,21 +5,23 @@ import { useAuth } from '@/provider/AuthProvider';
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
 interface DataContextType {
-    generadores:   any[];
-    activos:       any[];
-    alertas:       any[];
-    noLeidas:      number;
-    dashboardData: any | null;
-    recargar:      (seccion?: 'generadores' | 'activos' | 'alertas' | 'dashboard' | 'all') => Promise<void>;
+    generadores:    any[];
+    activos:        any[];
+    alertas:        any[];
+    mantenimientos: any[];
+    noLeidas:       number;
+    dashboardData:  any | null;
+    recargar:       (seccion?: 'generadores' | 'activos' | 'alertas' | 'dashboard' | 'mantenimientos' | 'all') => Promise<void>;
 }
 
 const DataContext = createContext<DataContextType>({
-    generadores:   [],
-    activos:       [],
-    alertas:       [],
-    noLeidas:      0,
-    dashboardData: null,
-    recargar:      async () => {},
+    generadores:    [],
+    activos:        [],
+    alertas:        [],
+    mantenimientos: [],
+    noLeidas:       0,
+    dashboardData:  null,
+    recargar:       async () => {},
 });
 
 export function DataProvider({ children }: { children: React.ReactNode }) {
@@ -30,6 +32,8 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     const [alertas,       setAlertas]       = useState<any[]>([]);
     const [noLeidas,      setNoLeidas]      = useState(0);
     const [dashboardData, setDashboardData] = useState<any | null>(null);
+    const [mantenimientos, setMantenimientos] = useState<any[]>([]);    
+
 
     useEffect(() => {
         if (!isAuthenticated) {
@@ -38,6 +42,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
             setAlertas([]);
             setNoLeidas(0);
             setDashboardData(null);
+            setMantenimientos([]);
         }
     }, [isAuthenticated]);
 
@@ -80,10 +85,21 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         } catch {}
     }, [fetchConAuth, isAuthenticated]);
 
-    const recargar = useCallback(async (seccion: 'generadores' | 'activos' | 'alertas' | 'dashboard' | 'all' = 'all') => {
+    const cargarMantenimientos = useCallback(async () => {
         if (!isAuthenticated) return;
+        try {
+            const res = await fetchConAuth(`${API_URL}/api/mantenimientos/proximos`);
+            const json = await res.json();
+            if (json.success) setMantenimientos(json.data);
+        } catch {}
+    }, [fetchConAuth, isAuthenticated]);
+
+    // CORRECCIÓN AQUÍ: Se añade 'mantenimientos' al tipo del parámetro y a las dependencias
+    const recargar = useCallback(async (seccion: 'generadores' | 'activos' | 'alertas' | 'dashboard' | 'mantenimientos' | 'all' = 'all') => {
+        if (!isAuthenticated) return;
+        
         if (seccion === 'all') {
-            await Promise.all([cargarGeneradores(), cargarActivos(), cargarAlertas(), cargarDashboard()]);
+            await Promise.all([cargarGeneradores(), cargarActivos(), cargarAlertas(), cargarDashboard(), cargarMantenimientos()]);
         } else if (seccion === 'generadores') {
             await Promise.all([cargarGeneradores(), cargarActivos(), cargarDashboard()]);
         } else if (seccion === 'activos') {
@@ -92,12 +108,14 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
             await cargarAlertas();
         } else if (seccion === 'dashboard') {
             await cargarDashboard();
+        } else if (seccion === 'mantenimientos') {
+            await cargarMantenimientos();
         }
-    }, [isAuthenticated, cargarGeneradores, cargarActivos, cargarAlertas, cargarDashboard]);
+    }, [isAuthenticated, cargarGeneradores, cargarActivos, cargarAlertas, cargarDashboard, cargarMantenimientos]);
 
     useEffect(() => {
         if (isAuthenticated) recargar('all');
-    }, [isAuthenticated]);
+    }, [isAuthenticated, recargar]);
 
     useEffect(() => {
         if (!isAuthenticated) return;
@@ -120,7 +138,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     }, [recargar, isAuthenticated]);
 
     return (
-        <DataContext.Provider value={{ generadores, activos, alertas, noLeidas, dashboardData, recargar }}>
+        <DataContext.Provider value={{ generadores, activos, alertas, mantenimientos, noLeidas, dashboardData, recargar }}>
             {children}
         </DataContext.Provider>
     );

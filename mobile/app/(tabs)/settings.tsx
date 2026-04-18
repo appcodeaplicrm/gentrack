@@ -170,6 +170,25 @@ export default function Settings() {
                     </View>
                 )}
 
+                {/* ── Reportes ── */}
+                <View style={s.seccion}>
+                    <Text style={s.seccionLabel}>Reportes</Text>
+                    <View style={s.card}>
+                        <TouchableOpacity
+                            style={s.adminItem}
+                            onPress={() => router.push('/reportes' as any)}
+                            activeOpacity={0.7}
+                        >
+                            <View style={s.adminItemLeft}>
+                                <View style={s.adminIconBox}>
+                                    <Ionicons name="document-text-outline" size={16} color={COLORS.primary} />
+                                </View>
+                                <Text style={s.adminItemText}>Reportes</Text>
+                            </View>
+                            <Ionicons name="chevron-forward" size={16} color={COLORS.textMuted} />
+                        </TouchableOpacity>
+                    </View>
+                </View>
 
                 {/* ── Acerca de ── */}
                 <View style={s.seccion}>

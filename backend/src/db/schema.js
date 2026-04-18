@@ -87,9 +87,12 @@ export const generadores = pgTable("gentrack_generadores", {
   gasolinaActualLitros: decimal("gasolina_actual_litros", { precision: 6, scale: 2 }).notNull().default("0"),
   encendidoEn:          timestamp("encendido_en"),
   gasolinaSeAcabaEn:    timestamp("gasolina_se_acaba_en"),
+  ultimoCambioFiltros: timestamp("ultimo_cambio_filtros"),
+  ultimoEncendidoSemanal: timestamp("ultimo_encendido_semanal"),
   eliminado:            boolean("eliminado").notNull().default(false),
   createdAt:            timestamp("created_at").defaultNow(),
   updatedAt:            timestamp("updated_at").defaultNow(),
+  limiteCorridaEn:      timestamp("limite_corrida_en"),
 });
 
 // Sesiones de Operacion
@@ -155,6 +158,19 @@ export const reportes = pgTable("gentrack_reportes", {
   generadoEn:  timestamp("generado_en").notNull().defaultNow(),
 });
 
+export const mantenimientosPendientes = pgTable("gentrack_mantenimientos_pendientes", {
+  idPendiente:   serial("idPendiente").primaryKey(),
+  idGenerador:   integer("idGenerador").notNull().references(() => generadores.idGenerador, { onDelete: 'cascade' }),
+  tipo:          varchar("tipo", { length: 30 }).notNull(),       // aceite | filtros | encendido | gasolina
+  prioridad:     varchar("prioridad", { length: 10 }).notNull(),  // alta | media | baja
+  estado:        varchar("estado", { length: 20 }).notNull().default("pendiente"), // pendiente | resuelto
+  notificado:    boolean("notificado").notNull().default(false),  // para no spamear notificaciones
+  creadoEn:      timestamp("creado_en").notNull().defaultNow(),
+  resueltaEn:    timestamp("resuelta_en"),                        // se llena cuando el técnico hace el mantenimiento
+  metadatos:     jsonb("metadatos"),                              // horasFaltantes, diasFaltantes, etc.
+});
+
+
 // Relations
 export const usuariosRelations = relations(usuarios, ({ many }) => ({
   refreshTokens:     many(refreshTokens),
@@ -164,6 +180,7 @@ export const usuariosRelations = relations(usuarios, ({ many }) => ({
   reportes:          many(reportes),
   eventos:           many(eventos),
 }));
+
 
 export const nodosRelations = relations(nodos, ({ one, many }) => ({
   generador: one(generadores, { fields: [nodos.idNodo], references: [generadores.idNodo] }),
@@ -178,6 +195,11 @@ export const generadoresRelations = relations(generadores, ({ one, many }) => ({
   mantenimientos:    many(mantenimientos),
   alertas:           many(alertas),
   reportes:          many(reportes),
+  mantenimientosPendientes: many(mantenimientosPendientes)
+}));
+
+export const mantenimientosPendientesRelations = relations(mantenimientosPendientes, ({ one }) => ({
+  generador: one(generadores, { fields: [mantenimientosPendientes.idGenerador], references: [generadores.idGenerador] }),
 }));
 
 export const sesionesOperacionRelations = relations(sesionesOperacion, ({ one }) => ({

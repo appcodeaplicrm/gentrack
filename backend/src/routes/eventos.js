@@ -6,6 +6,38 @@ import { verificarToken } from '../middleware/auth.js';
 
 const router = Router();
 
+router.get('/', verificarToken, async (req, res) => {
+    try {
+        const { tipo } = req.query;
+
+        const rows = await db
+            .select({
+                idEvento:      schema.eventos.idEvento,
+                tipoEvento:    schema.eventos.tipoEvento,
+                origen:        schema.eventos.origen,
+                metadata:      schema.eventos.metadata,
+                timestamp:     schema.eventos.timestamp,
+                idGenerador:   schema.eventos.idGenerador,
+                genId:         schema.generadores.genId,
+                nombreNodo:    schema.nodos.nombre,
+                ubicacion:     schema.nodos.ubicacion,
+                nombreUsuario: schema.usuarios.nombre,
+            })
+            .from(schema.eventos)
+            .innerJoin(schema.generadores, eq(schema.eventos.idGenerador, schema.generadores.idGenerador))
+            .innerJoin(schema.nodos,       eq(schema.generadores.idNodo,  schema.nodos.idNodo))
+            .leftJoin(schema.usuarios,     eq(schema.eventos.idUsuario,   schema.usuarios.idUsuario))
+            .where(tipo ? eq(schema.eventos.tipoEvento, tipo) : undefined)
+            .orderBy(desc(schema.eventos.timestamp));
+
+        res.status(200).json({ success: true, data: rows });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ success: false, error: 'Error al obtener eventos' });
+    }
+});
+
+
 // Obtener eventos de un generador
 router.get('/:idGenerador', verificarToken, async (req, res) => {
     try {

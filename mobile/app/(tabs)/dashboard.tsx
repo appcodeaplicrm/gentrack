@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
     View, Text, ScrollView, StyleSheet,
-    ActivityIndicator, RefreshControl, Animated,
+    ActivityIndicator, RefreshControl, Animated, TouchableOpacity
 } from 'react-native';
 import { ScreenWrapper } from '@/components/ScreenWrapper';
 import { StatCard }       from '@/components/dashboard/StatCard';
@@ -10,6 +10,8 @@ import { ActividadItem }  from '@/components/dashboard/ActividadItem';
 import { useAuth }        from '@/provider/AuthProvider';
 import { useData }        from '@/provider/DataProvider';
 import { COLORS }         from '@/assets/styles/colors';
+import { useRouter } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 
 // ─── FadeSlideIn (igual que antes) ───────────────────────────────────────────
 function FadeSlideIn({ children, delay = 0, fromY = 24, ready }: {
@@ -43,6 +45,8 @@ export default function Dashboard() {
 
     const [refreshing, setRefreshing] = useState(false);
     const [ready,      setReady]      = useState(false);
+
+    const router = useRouter();
 
     // Dispara animaciones cuando llegan los datos
     useEffect(() => {
@@ -81,12 +85,28 @@ export default function Dashboard() {
         <ScreenWrapper>
             <FadeSlideIn delay={D.header} fromY={-20} ready={ready}>
                 <View style={styles.header}>
-                    <Text style={styles.title}>Dashboard</Text>
-                    <FadeSlideIn delay={D.greeting} fromY={-8} ready={ready}>
-                        <Text style={styles.greeting}>
-                            Hola, {usuario?.nombre?.split(' ')[0]}!
-                        </Text>
-                    </FadeSlideIn>
+                    <View style={styles.headerTopRow}> {/* Contenedor horizontal */}
+                        <View>
+                            <Text style={styles.title}>Dashboard</Text>
+                            <FadeSlideIn delay={D.greeting} fromY={-8} ready={ready}>
+                                <Text style={styles.greeting}>
+                                    Hola, {usuario?.nombre?.split(' ')[0]}!
+                                </Text>
+                            </FadeSlideIn>
+                        </View>
+
+                        {/* Botón de Alertas */}
+                        <TouchableOpacity 
+                            onPress={() => router.push('/alerts')}
+                            style={styles.notificationButton}
+                        >
+                            <Ionicons name="notifications-outline" size={26} color={COLORS.textPrimary} />
+                            {/* Opcional: Badge de alertas si data.general.alertas > 0 */}
+                            {dashboardData?.general?.alertas > 0 && (
+                                <View style={styles.badge} />
+                            )}
+                        </TouchableOpacity>
+                    </View>
                 </View>
             </FadeSlideIn>
 
@@ -181,4 +201,25 @@ const styles = StyleSheet.create({
     statsRow:         { flexDirection: 'row', marginBottom: 24, marginHorizontal: -4 },
     emptyBox:         { backgroundColor: 'rgba(255,255,255,0.03)', borderRadius: 16, padding: 20, alignItems: 'center', marginBottom: 10 },
     emptyText:        { color: COLORS.textMuted, fontSize: 13 },
+    headerTopRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+    },
+    notificationButton: {
+        padding: 8,
+        backgroundColor: 'rgba(255,255,255,0.05)',
+        borderRadius: 12,
+    },
+    badge: {
+        position: 'absolute',
+        top: 8,
+        right: 10,
+        width: 10,
+        height: 10,
+        borderRadius: 5,
+        backgroundColor: '#ff4b4b', // Un rojo vibrante
+        borderWidth: 2,
+        borderColor: COLORS.background, // Asumiendo que tienes este color
+    },
 });
