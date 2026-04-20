@@ -4,7 +4,8 @@ import * as schema from '../db/schema.js';
 import { eq, and, isNull, inArray } from 'drizzle-orm';
 import { verificarToken }          from '../middleware/auth.js';
 import { verificarTokenOApiKey }   from '../middleware/authFlexible.js';
-import { notificar, NOTIF } from '../services/notificaciones.js';
+import { notificar, NOTIF }        from '../services/notificaciones.js';
+import { tuyaEncenderGenerador, tuyaApagarGenerador } from '../services/tuya.js';
 
 const router = Router();
 
@@ -19,7 +20,7 @@ const registrarEvento = async ({ idGenerador, idUsuario, idApiKey, tipoEvento, o
     });
 };
 
-// Encender generador — JWT o API key
+// ── ENCENDER ─────────────────────────────────────────────────────────────────
 router.post('/encender', verificarTokenOApiKey, async (req, res) => {
     try {
         const { idGenerador, tipoInicio } = req.body;
@@ -30,13 +31,13 @@ router.post('/encender', verificarTokenOApiKey, async (req, res) => {
 
         const idUsuario = req.usuario?.idUsuario || null;
         const idApiKey  = req.apiKey?.idApiKey   || null;
-        const limiteCorridaEn = new Date(ahora.getTime() + 6 * 60 * 60 * 1000);
 
         const genData = await db.select({
             gasolinaActualLitros: schema.generadores.gasolinaActualLitros,
             consumoGasolinaHoras: schema.generadoresModelos.consumoGasolinaHoras,
             genId:                schema.generadores.genId,
             nodo:                 schema.nodos.nombre,
+            tuyaDeviceId:         schema.generadores.tuyaDeviceId,
         })
         .from(schema.generadores)
         .innerJoin(schema.generadoresModelos, eq(schema.generadores.idModelo, schema.generadoresModelos.idModelo))
@@ -47,11 +48,12 @@ router.post('/encender', verificarTokenOApiKey, async (req, res) => {
             return res.status(404).json({ success: false, error: 'Generador no encontrado' });
         }
 
+        const ahora             = new Date();
         const litros            = parseFloat(genData[0].gasolinaActualLitros);
         const consumo           = parseFloat(genData[0].consumoGasolinaHoras);
         const horasRestantes    = litros / consumo;
-        const ahora             = new Date();
         const gasolinaSeAcabaEn = new Date(ahora.getTime() + horasRestantes * 60 * 60 * 1000);
+        const limiteCorridaEn   = new Date(ahora.getTime() + 6 * 60 * 60 * 1000);
 
         await db.update(schema.generadores)
             .set({
@@ -81,9 +83,17 @@ router.post('/encender', verificarTokenOApiKey, async (req, res) => {
         });
 
         await notificar(
-            tipoInicio.toLowerCase() === 'automatico' ? NOTIF.GENERADOR_ENCENDIDO_AUTO : NOTIF.GENERADOR_ENCENDIDO_MANUAL,
+            tipoInicio.toLowerCase() === 'automatico'
+                ? NOTIF.GENERADOR_ENCENDIDO_AUTO
+                : NOTIF.GENERADOR_ENCENDIDO_MANUAL,
             { genId: genData[0].genId, nodo: genData[0].nodo }
         );
+
+        // Tuya — no bloquea la respuesta si falla
+        if (genData[0].tuyaDeviceId) {
+            tuyaEncenderGenerador(genData[0].tuyaDeviceId)
+                .catch(err => console.error(`[TUYA] Error al encender ${genData[0].genId}:`, err.message));
+        }
 
         res.status(201).json({ success: true, data: data[0] });
     } catch (error) {
@@ -92,7 +102,7 @@ router.post('/encender', verificarTokenOApiKey, async (req, res) => {
     }
 });
 
-// Apagar generador — JWT o API key
+// ── APAGAR ────────────────────────────────────────────────────────────────────
 router.post('/apagar', verificarTokenOApiKey, async (req, res) => {
     try {
         const { idGenerador } = req.body;
@@ -130,6 +140,7 @@ router.post('/apagar', verificarTokenOApiKey, async (req, res) => {
             consumoGasolinaHoras: schema.generadoresModelos.consumoGasolinaHoras,
             genId:                schema.generadores.genId,
             nodo:                 schema.nodos.nombre,
+            tuyaDeviceId:         schema.generadores.tuyaDeviceId,
         })
         .from(schema.generadores)
         .innerJoin(schema.generadoresModelos, eq(schema.generadores.idModelo, schema.generadoresModelos.idModelo))
@@ -155,13 +166,13 @@ router.post('/apagar', verificarTokenOApiKey, async (req, res) => {
                 estado:               'apagado',
                 encendidoEn:          null,
                 gasolinaSeAcabaEn:    null,
+                limiteCorridaEn:      null,   // limpiar al apagar
                 horasTotales:         segundosTotales,
                 gasolinaActualLitros: nuevaGasolina,
                 updatedAt:            new Date(),
             })
             .where(eq(schema.generadores.idGenerador, idGenerador));
 
-        // Marcar alertas activas como leídas al apagar
         await db.update(schema.alertas)
             .set({ leida: true, leidaEn: new Date() })
             .where(
@@ -173,6 +184,7 @@ router.post('/apagar', verificarTokenOApiKey, async (req, res) => {
                         'gasolina_agotada',
                         'aceite_proximo',
                         'aceite_vencido',
+                        'corrida_excesiva',  // limpiar también esta al apagar
                     ])
                 )
             );
@@ -198,6 +210,12 @@ router.post('/apagar', verificarTokenOApiKey, async (req, res) => {
             horasSesion: horasSesion.toFixed(2),
         });
 
+        // Tuya — no bloquea la respuesta si falla
+        if (generador[0].tuyaDeviceId) {
+            tuyaApagarGenerador(generador[0].tuyaDeviceId)
+                .catch(err => console.error(`[TUYA] Error al apagar ${generador[0].genId}:`, err.message));
+        }
+
         res.status(200).json({ success: true, data: { segundosSesion, segundosTotales, nuevaGasolina } });
     } catch (error) {
         console.error(error);
@@ -205,7 +223,7 @@ router.post('/apagar', verificarTokenOApiKey, async (req, res) => {
     }
 });
 
-// Obtener todas las sesiones de un generador
+// ── GET sesiones de un generador ──────────────────────────────────────────────
 router.get('/:idGenerador', verificarToken, async (req, res) => {
     try {
         const { idGenerador } = req.params;
@@ -220,7 +238,7 @@ router.get('/:idGenerador', verificarToken, async (req, res) => {
     }
 });
 
-// Obtener sesion activa de un generador
+// ── GET sesión activa de un generador ─────────────────────────────────────────
 router.get('/:idGenerador/activa', verificarToken, async (req, res) => {
     try {
         const { idGenerador } = req.params;
@@ -238,6 +256,5 @@ router.get('/:idGenerador/activa', verificarToken, async (req, res) => {
         res.status(500).json({ success: false, error: 'Error al obtener sesión activa' });
     }
 });
-
 
 export default router;

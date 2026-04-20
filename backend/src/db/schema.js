@@ -87,12 +87,13 @@ export const generadores = pgTable("gentrack_generadores", {
   gasolinaActualLitros: decimal("gasolina_actual_litros", { precision: 6, scale: 2 }).notNull().default("0"),
   encendidoEn:          timestamp("encendido_en"),
   gasolinaSeAcabaEn:    timestamp("gasolina_se_acaba_en"),
-  ultimoCambioFiltros: timestamp("ultimo_cambio_filtros"),
+  ultimoCambioFiltros:  timestamp("ultimo_cambio_filtros"),
   ultimoEncendidoSemanal: timestamp("ultimo_encendido_semanal"),
   eliminado:            boolean("eliminado").notNull().default(false),
   createdAt:            timestamp("created_at").defaultNow(),
   updatedAt:            timestamp("updated_at").defaultNow(),
   limiteCorridaEn:      timestamp("limite_corrida_en"),
+  tuyaDeviceId:         varchar("tuya_device_id", { length: 100 }),
 });
 
 // Sesiones de Operacion
@@ -181,6 +182,18 @@ export const usuariosRelations = relations(usuarios, ({ many }) => ({
   eventos:           many(eventos),
 }));
 
+//Agendados
+export const encendidosAgendados = pgTable("gentrack_encendidos_agendados", {
+    idAgendado:   serial("idAgendado").primaryKey(),
+    idGenerador:  integer("idGenerador").notNull().references(() => generadores.idGenerador, { onDelete: 'cascade' }),
+    idUsuario:    integer("idUsuario").references(() => usuarios.idUsuario),
+    fechaHora:    timestamp("fecha_hora").notNull(),
+    recurrente:   boolean("recurrente").notNull().default(false),
+    diasSemana:   jsonb("dias_semana"),   // [1,2,3] — 0=dom, 1=lun ... 6=sab
+    estado:       varchar("estado", { length: 20 }).notNull().default("pendiente"), // pendiente | ejecutado | cancelado
+    creadoEn:     timestamp("creado_en").notNull().defaultNow(),
+    ejecutadoEn:  timestamp("ejecutado_en"),
+});
 
 export const nodosRelations = relations(nodos, ({ one, many }) => ({
   generador: one(generadores, { fields: [nodos.idNodo], references: [generadores.idNodo] }),
@@ -195,7 +208,8 @@ export const generadoresRelations = relations(generadores, ({ one, many }) => ({
   mantenimientos:    many(mantenimientos),
   alertas:           many(alertas),
   reportes:          many(reportes),
-  mantenimientosPendientes: many(mantenimientosPendientes)
+  mantenimientosPendientes: many(mantenimientosPendientes),
+  encendidosAgendados: many(encendidosAgendados),
 }));
 
 export const mantenimientosPendientesRelations = relations(mantenimientosPendientes, ({ one }) => ({
@@ -226,4 +240,9 @@ export const alertasRelations = relations(alertas, ({ one }) => ({
 export const reportesRelations = relations(reportes, ({ one }) => ({
   generador: one(generadores, { fields: [reportes.idGenerador], references: [generadores.idGenerador] }),
   usuario:   one(usuarios,    { fields: [reportes.idUsuario],   references: [usuarios.idUsuario] }),
+}));
+
+export const encendidosAgendadosRelations = relations(encendidosAgendados, ({ one }) => ({
+    generador: one(generadores, { fields: [encendidosAgendados.idGenerador], references: [generadores.idGenerador] }),
+    usuario:   one(usuarios,    { fields: [encendidosAgendados.idUsuario],   references: [usuarios.idUsuario] }),
 }));

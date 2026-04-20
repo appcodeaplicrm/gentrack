@@ -20,6 +20,7 @@ export const NOTIF = {
     ACEITE_VENCIDO:              'aceite_vencido',
     MANTENIMIENTO_PENDIENTE:     'mantenimiento_pendiente',
     LIMITE_CORRIENDO:              'limite_corriendo',
+    ENCENDIDO_AGENDADO_EJECUTADO: 'encendido_agendado_ejecutado',
 };
 
 // Configuración de cada tipo
@@ -113,6 +114,13 @@ const CONFIG = {
         cuerpo:        (d) => `El generador lleva ${d.horasCorriendo}h corriendo sin descanso. Debe apagarse para descansar.`,
         prioridad:     'high',
         severidad:     'critica',
+        guardarAlerta: false,
+    },
+    [NOTIF.ENCENDIDO_AGENDADO_EJECUTADO]: {
+        titulo:        (d) => `${d.genId} encendido automáticamente`,
+        cuerpo:        (d) => `El generador en ${d.nodo} fue encendido según lo agendado. Confirma que todo esté bien.`,
+        prioridad:     'high',
+        severidad:     'info',
         guardarAlerta: false,
     },
 };

@@ -15,9 +15,11 @@ import cloudinaryRouter from './routes/cloudinary.js';
 import { iniciarMonitoreoGasolina } from './services/gasolina.js';
 import { iniciarPollingMantenimientos } from './services/mantenimientos.js'
 import { iniciarPollingCorrida } from './services/limite_corriendo.js'
+import { iniciarPollingAgendados } from './services/agendados.js'
 import pushTokensRouter from './routes/pushTokens.js';
 import alertasRouter from './routes/alertas.js'
 import usuariosRouter from './routes/usuarios.js';
+import agendadosRouter from './routes/agendados.js'
 
 import { verificarToken } from './middleware/auth.js';
 import { verificarTokenOApiKey } from './middleware/authFlexible.js';
@@ -54,10 +56,12 @@ app.use('/api/cloudinary',     verificarTokenOApiKey, cloudinaryRouter);
 app.use('/api/push-tokens',    verificarTokenOApiKey, pushTokensRouter);
 app.use('/api/alertas',        verificarTokenOApiKey, alertasRouter);
 app.use('/api/usuarios',       verificarTokenOApiKey, usuariosRouter);
+app.use('/api/agendados',       verificarTokenOApiKey, agendadosRouter);
 
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`GenTrack API corriendo en puerto ${PORT}`);
     iniciarMonitoreoGasolina();
     iniciarPollingMantenimientos(); 
     iniciarPollingCorrida()
+    iniciarPollingAgendados()
 });

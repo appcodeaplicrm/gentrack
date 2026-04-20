@@ -32,13 +32,14 @@ router.get('/proximos', verificarToken, async (req, res) => {
             ultimoEncendidoSemanal: schema.generadores.ultimoEncendidoSemanal,
             intervalo:              schema.generadoresModelos.intervaloCambioAceite,
             capacidadGasolina:      schema.generadoresModelos.capacidadGasolina,
-            encendidoEn:          schema.generadores.encendidoEn,
-            consumoGasolinaHoras: schema.generadoresModelos.consumoGasolinaHoras,
+            encendidoEn:            schema.generadores.encendidoEn,
+            consumoGasolinaHoras:   schema.generadoresModelos.consumoGasolinaHoras,
         })
         .from(schema.generadores)
         .innerJoin(schema.generadoresModelos, eq(schema.generadores.idModelo, schema.generadoresModelos.idModelo))
         .where(eq(schema.generadores.eliminado, false));
 
+        // Pendientes activos — aceite y gasolina los usan para saber si mostrar
         const pendientes = await db.select()
             .from(schema.mantenimientosPendientes)
             .where(eq(schema.mantenimientosPendientes.estado, 'pendiente'));
@@ -51,71 +52,87 @@ router.get('/proximos', verificarToken, async (req, res) => {
         const data = await Promise.all(gens.map(async (g) => {
             const resultado = [];
 
-            // ── 1. CAMBIO DE ACEITE ──────────────────────────────────────
-            const ultimoAceite = await db.select()
-                .from(schema.mantenimientos)
-                .where(and(
-                    eq(schema.mantenimientos.idGenerador, g.idGenerador),
-                    eq(schema.mantenimientos.tipo, 'aceite')
-                ))
-                .orderBy(desc(schema.mantenimientos.realizadoEn))
-                .limit(1);
+            // Horas reales en tiempo real (incluyendo sesión activa)
+            const horasGuardadas = parseFloat(g.horasTotales || 0) / 3600;
+            const horasSesion    = g.encendidoEn
+                ? (ahora - new Date(g.encendidoEn)) / 1000 / 3600
+                : 0;
+            const horasActuales = horasGuardadas + horasSesion;
 
-            const horasUltimoAceite    = ultimoAceite[0] ? parseFloat(ultimoAceite[0].horasAlMomento) : 0;
-            const horasActuales        = parseFloat(g.horasTotales);
-            const intervalo            = g.intervalo;
-            const horasDesdeAceite     = horasActuales - horasUltimoAceite;
-            const horasFaltantesAceite = Math.max(0, intervalo - horasDesdeAceite);
-            const progresoAceite       = Math.min(1, horasDesdeAceite / intervalo);
-            const pendienteAceite      = pendientesMap[`${g.idGenerador}-aceite`];
+            // ── 1. ACEITE — solo si tiene pendiente ──────────────────────
+            const pendienteAceite = pendientesMap[`${g.idGenerador}-aceite`];
+            if (pendienteAceite) {
+                const ultimoAceite = await db.select()
+                    .from(schema.mantenimientos)
+                    .where(and(
+                        eq(schema.mantenimientos.idGenerador, g.idGenerador),
+                        eq(schema.mantenimientos.tipo, 'aceite')
+                    ))
+                    .orderBy(desc(schema.mantenimientos.realizadoEn))
+                    .limit(1);
 
-            resultado.push({
-                idMantenimiento: ultimoAceite[0]?.idMantenimiento || `new-aceite-${g.idGenerador}`,
-                idPendiente:     pendienteAceite?.idPendiente || null,
-                tienePendiente:  !!pendienteAceite,
-                idGenerador:     g.idGenerador,
-                genId:           g.genId,
-                tipo:            'aceite',
-                label:           'Cambio de Aceite',
-                horasTotales:    horasActuales,
-                horasFaltantes:  Math.round(horasFaltantesAceite * 100) / 100,
-                progreso:        parseFloat(progresoAceite.toFixed(2)),
-                prioridad:       pendienteAceite?.prioridad
-                                    || (horasFaltantesAceite <= 10 ? 'alta' : horasFaltantesAceite <= 25 ? 'media' : 'baja'),
-                meta:            `Cada ${intervalo}h de uso`,
-            });
+                const horasUltimoAceite    = ultimoAceite[0]?.horasAlMomento != null
+                    ? parseFloat(ultimoAceite[0].horasAlMomento) / 3600
+                    : 0;
+                const horasDesdeAceite     = horasActuales - horasUltimoAceite;
+                const horasFaltantesAceite = Math.max(0, parseInt(g.intervalo) - horasDesdeAceite);
+                const progresoAceite       = Math.min(1, horasDesdeAceite / parseInt(g.intervalo));
 
-            // ── 2. GASOLINA 
-            const capacidad      = parseFloat(g.capacidadGasolina);
-            const litrosActuales = parseFloat(g.gasolinaActualLitros);
-            const porcentaje     = litrosActuales / capacidad;
-            const pendienteGas   = pendientesMap[`${g.idGenerador}-gasolina`];
+                resultado.push({
+                    idMantenimiento: ultimoAceite[0]?.idMantenimiento || `new-aceite-${g.idGenerador}`,
+                    idPendiente:     pendienteAceite.idPendiente,
+                    tienePendiente:  true,
+                    idGenerador:     g.idGenerador,
+                    genId:           g.genId,
+                    tipo:            'aceite',
+                    label:           'Cambio de Aceite',
+                    horasTotales:    horasActuales,
+                    horasFaltantes:  Math.round(horasFaltantesAceite * 100) / 100,
+                    progreso:        parseFloat(progresoAceite.toFixed(2)),
+                    prioridad:       pendienteAceite.prioridad,
+                    meta:            `Cada ${g.intervalo}h de uso`,
+                });
+            }
 
-            resultado.push({
-                idMantenimiento: `gas-${g.idGenerador}`,
-                idPendiente:     pendienteGas?.idPendiente || null,
-                tienePendiente:  !!pendienteGas,
-                idGenerador:     g.idGenerador,
-                genId:           g.genId,
-                tipo:            'gasolina',
-                label:           'Llenado de Combustible',
-                horasTotales:    horasActuales,
-                horasFaltantes:  null,
-                progreso:        parseFloat(porcentaje.toFixed(2)),
-                prioridad:       pendienteGas?.prioridad
-                                    || (porcentaje <= 0.2 ? 'alta' : porcentaje <= 0.5 ? 'media' : 'baja'),
-                meta:            'Recargar cuando baje del 50%',
-                extra:           { 
-                    litrosActuales, 
-                    capacidad, 
-                    porcentaje: Math.round(porcentaje * 100),
-                    encendidoEn:         g.encendidoEn ?? null,           // ← nuevo
-                    consumoGasolinaHoras: parseFloat(g.consumoGasolinaHoras),
-                },
-            });
+            // ── 2. GASOLINA — solo si tiene pendiente ────────────────────
+            const pendienteGas = pendientesMap[`${g.idGenerador}-gasolina`];
+            if (pendienteGas) {
+                const capacidad       = parseFloat(g.capacidadGasolina);
+                const litrosGuardados = parseFloat(g.gasolinaActualLitros);
+                const consumoHora     = parseFloat(g.consumoGasolinaHoras);
 
-            // ── 3. CAMBIO DE FILTROS ─────────────────────────────────────
+                // Litros reales descontando consumo de sesión activa
+                const litrosReales = g.encendidoEn
+                    ? Math.max(0, litrosGuardados - (horasSesion * consumoHora))
+                    : litrosGuardados;
+                const porcentaje = litrosReales / capacidad;
+
+                resultado.push({
+                    idMantenimiento:  `gas-${g.idGenerador}`,
+                    idPendiente:      pendienteGas.idPendiente,
+                    tienePendiente:   true,
+                    idGenerador:      g.idGenerador,
+                    genId:            g.genId,
+                    tipo:             'gasolina',
+                    label:            'Llenado de Combustible',
+                    horasTotales:     horasActuales,
+                    horasFaltantes:   null,
+                    progreso:         parseFloat(porcentaje.toFixed(2)),
+                    prioridad:        pendienteGas.prioridad,
+                    meta:             'Recargar cuando baje del 40%',
+                    extra: {
+                        litrosActuales:       litrosReales,
+                        capacidad,
+                        porcentaje:           Math.round(porcentaje * 100),
+                        encendidoEn:          g.encendidoEn ?? null,
+                        consumoGasolinaHoras: consumoHora,
+                    },
+                });
+            }
+
+            // ── 3. FILTROS — siempre visible, cálculo dinámico ───────────
             const INTERVALO_FILTROS_MS = 90 * 24 * 60 * 60 * 1000;
+            const pendienteFiltros     = pendientesMap[`${g.idGenerador}-filtros`];
 
             const ultimoFiltro = await db.select()
                 .from(schema.mantenimientos)
@@ -126,12 +143,11 @@ router.get('/proximos', verificarToken, async (req, res) => {
                 .orderBy(desc(schema.mantenimientos.realizadoEn))
                 .limit(1);
 
-            const fechaUltimoFiltro  = ultimoFiltro[0]?.realizadoEn || g.ultimoCambioFiltros || null;
-            const msPasadosFiltros   = fechaUltimoFiltro ? ahora - new Date(fechaUltimoFiltro) : INTERVALO_FILTROS_MS;
-            const msFaltanFiltros    = Math.max(0, INTERVALO_FILTROS_MS - msPasadosFiltros);
-            const diasFaltanFiltros  = Math.round(msFaltanFiltros / (24 * 60 * 60 * 1000));
-            const progresoFiltros    = Math.min(1, msPasadosFiltros / INTERVALO_FILTROS_MS);
-            const pendienteFiltros   = pendientesMap[`${g.idGenerador}-filtros`];
+            const fechaUltimoFiltro = ultimoFiltro[0]?.realizadoEn || g.ultimoCambioFiltros || null;
+            const msPasadosFiltros  = fechaUltimoFiltro ? ahora - new Date(fechaUltimoFiltro) : INTERVALO_FILTROS_MS;
+            const msFaltanFiltros   = Math.max(0, INTERVALO_FILTROS_MS - msPasadosFiltros);
+            const diasFaltanFiltros = Math.round(msFaltanFiltros / (24 * 60 * 60 * 1000));
+            const progresoFiltros   = Math.min(1, msPasadosFiltros / INTERVALO_FILTROS_MS);
 
             resultado.push({
                 idMantenimiento: ultimoFiltro[0]?.idMantenimiento || `new-filtros-${g.idGenerador}`,
@@ -150,8 +166,9 @@ router.get('/proximos', verificarToken, async (req, res) => {
                 extra:           { diasFaltantes: diasFaltanFiltros, proximaFecha: new Date(Date.now() + msFaltanFiltros) },
             });
 
-            // ── 4. ENCENDIDO SEMANAL ─────────────────────────────────────
-            const INTERVALO_ENCENDIDO_MS = 7 * 24 * 60 * 60 * 1000;
+            // ── 4. ENCENDIDO — siempre visible, cálculo dinámico ─────────
+            const INTERVALO_ENCENDIDO_MS = 5 * 24 * 60 * 60 * 1000; // 5 días
+            const pendienteEnc           = pendientesMap[`${g.idGenerador}-encendido`];
 
             const ultimaSesion = await db.select({ inicio: schema.sesionesOperacion.inicio })
                 .from(schema.sesionesOperacion)
@@ -159,12 +176,11 @@ router.get('/proximos', verificarToken, async (req, res) => {
                 .orderBy(desc(schema.sesionesOperacion.inicio))
                 .limit(1);
 
-            const fechaUltimoEnc   = ultimaSesion[0]?.inicio || g.ultimoEncendidoSemanal || null;
-            const msPasadosEnc     = fechaUltimoEnc ? ahora - new Date(fechaUltimoEnc) : INTERVALO_ENCENDIDO_MS;
-            const msFaltanEnc      = Math.max(0, INTERVALO_ENCENDIDO_MS - msPasadosEnc);
-            const diasFaltanEnc    = Math.round(msFaltanEnc / (24 * 60 * 60 * 1000));
-            const progresoEnc      = Math.min(1, msPasadosEnc / INTERVALO_ENCENDIDO_MS);
-            const pendienteEnc     = pendientesMap[`${g.idGenerador}-encendido`];
+            const fechaUltimoEnc = ultimaSesion[0]?.inicio || g.ultimoEncendidoSemanal || null;
+            const msPasadosEnc   = fechaUltimoEnc ? ahora - new Date(fechaUltimoEnc) : INTERVALO_ENCENDIDO_MS;
+            const msFaltanEnc    = Math.max(0, INTERVALO_ENCENDIDO_MS - msPasadosEnc);
+            const diasFaltanEnc  = Math.round(msFaltanEnc / (24 * 60 * 60 * 1000));
+            const progresoEnc    = Math.min(1, msPasadosEnc / INTERVALO_ENCENDIDO_MS);
 
             resultado.push({
                 idMantenimiento: `enc-${g.idGenerador}`,
@@ -179,7 +195,7 @@ router.get('/proximos', verificarToken, async (req, res) => {
                 progreso:        parseFloat(progresoEnc.toFixed(2)),
                 prioridad:       pendienteEnc?.prioridad
                                     || (diasFaltanEnc === 0 ? 'alta' : diasFaltanEnc <= 2 ? 'media' : 'baja'),
-                meta:            'Encender 1h por semana',
+                meta:            'Encender al menos 1h cada 5 días',
                 extra:           { diasFaltantes: diasFaltanEnc, ultimoEncendido: fechaUltimoEnc },
             });
 
@@ -405,6 +421,7 @@ router.post('/', verificarToken, async (req, res) => {
 
         // ── ACEITE ────────────────────────────────────────────────────────
         if (tipo === 'aceite') {
+            
             await db.update(schema.alertas)
                 .set({ leida: true, leidaEn: new Date() })
                 .where(
