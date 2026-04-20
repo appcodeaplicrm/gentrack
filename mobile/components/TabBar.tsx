@@ -7,8 +7,8 @@ import { useData } from '@/provider/DataProvider';
 const TABS = [
     { name: 'dashboard',   icon: 'grid-outline',      route: '/(tabs)/dashboard'    },
     { name: 'generadores', icon: 'menu-outline',      route: '/(tabs)/generadores'  },
-    { name: 'mantenimientos', icon: 'construct-outline', route: '/(tabs)/mantenimientos' }, // Agregado
     { name: 'activos',     icon: 'flash-outline',     route: '/(tabs)/activos'      },
+    { name: 'mantenimientos', icon: 'construct-outline', route: '/(tabs)/mantenimientos' },
     { name: 'settings',    icon: 'settings-outline',  route: '/(tabs)/settings'     },
 ];
 

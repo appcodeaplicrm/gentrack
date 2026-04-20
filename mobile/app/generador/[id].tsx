@@ -9,8 +9,9 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '@/provider/AuthProvider';
 import { useData } from '@/provider/DataProvider';
 import { COLORS } from '@/assets/styles/colors';
-import { ModalCambioAceite }   from '@/components/generadores/ModalCambioAceite';
-import { ModalLlenarGasolina } from '@/components/generadores/ModalLlenarGasolina';
+import { ModalCambioAceite }        from '@/components/generadores/ModalCambioAceite';
+import { ModalLlenarGasolina }       from '@/components/generadores/ModalLlenarGasolina';
+import { ModalCalendarioAgendados }  from '@/components/generadores/ModalCalendarioAgendados';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -68,6 +69,7 @@ export default function GeneradorDetalle() {
     const [alertaGasolina, setAlertaGasolina] = useState(false);
     const [modalAceite,    setModalAceite]    = useState(false);
     const [modalGasolina,  setModalGasolina]  = useState(false);
+    const [modalCalendario, setModalCalendario] = useState(false); // ← nuevo
     const [segundosTotalesActuales, setSegundosTotalesActuales] = useState(0);
     const [horasParaModal, setHorasParaModal] = useState(0);
 
@@ -128,9 +130,9 @@ export default function GeneradorDetalle() {
         if (!gen) return 0;
         if (gen.estado === 'corriendo' && gen.encendidoEn) {
             const sesionSegundos = Math.floor((Date.now() - new Date(gen.encendidoEn).getTime()) / 1000);
-            return gen.horasTotales + sesionSegundos;
+            return Math.floor(gen.horasTotales) + sesionSegundos;
         }
-        return gen.horasTotales;
+        return Math.floor(gen.horasTotales);
     };
 
     const iniciarTimer = () => {
@@ -142,7 +144,7 @@ export default function GeneradorDetalle() {
 
             const sesionMs       = Math.max(0, Date.now() - new Date(gen.encendidoEn).getTime());
             const sesionSegundos = Math.floor(sesionMs / 1000);
-            const totalSegundos = Math.floor(gen.horasTotales) + sesionSegundos;
+            const totalSegundos  = Math.floor(gen.horasTotales) + sesionSegundos;
 
             setSegundosTotalesActuales(totalSegundos);
             setHorasActivo(calcularHoras(gen.horasTotales, gen.encendidoEn));
@@ -317,14 +319,23 @@ export default function GeneradorDetalle() {
             <ImageBackground source={require('@/assets/images/bg-login.png')} style={StyleSheet.absoluteFill} resizeMode="cover" />
             <View style={styles.overlay} />
 
+            {/* ── Header con icono calendario ── */}
             <View style={styles.header}>
                 <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
                     <Ionicons name="arrow-back" size={20} color={COLORS.textPrimary} />
                 </TouchableOpacity>
-                <View>
+                <View style={{ flex: 1 }}>
                     <Text style={styles.headerTitle}>{generador.genId}</Text>
                     <Text style={styles.headerSub}>{generador.marca}</Text>
                 </View>
+                {/* ← icono calendario */}
+                <TouchableOpacity
+                    style={styles.calendarBtn}
+                    onPress={() => setModalCalendario(true)}
+                    activeOpacity={0.8}
+                >
+                    <Ionicons name="calendar-outline" size={20} color="#A78BFA" />
+                </TouchableOpacity>
             </View>
 
             <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
@@ -496,6 +507,12 @@ export default function GeneradorDetalle() {
                 onConfirmar={handleRegistrarGasolina}
                 fetchConAuth={fetchConAuth}
             />
+            <ModalCalendarioAgendados
+                visible={modalCalendario}
+                onClose={() => setModalCalendario(false)}
+                idGenerador={generador.idGenerador}
+                genId={generador.genId}
+            />
         </View>
     );
 }
@@ -508,6 +525,8 @@ const styles = StyleSheet.create({
     backBtn:           { width: 40, height: 40, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.07)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
     headerTitle:       { fontSize: 18, fontWeight: '800', color: COLORS.textPrimary },
     headerSub:         { fontSize: 12, color: COLORS.textMuted },
+    // ← nuevo botón calendario en header
+    calendarBtn:       { width: 40, height: 40, borderRadius: 12, backgroundColor: 'rgba(167,139,250,0.1)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(167,139,250,0.25)' },
     scroll:            { paddingHorizontal: 20 },
     statusCard:        { backgroundColor: 'rgba(8,15,40,0.75)', borderRadius: 20, padding: 20, borderWidth: 1, marginBottom: 14 },
     statusRow:         { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
