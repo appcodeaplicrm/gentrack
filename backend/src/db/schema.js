@@ -17,7 +17,8 @@ export const usuarios = pgTable("gentrack_usuarios", {
   nombre:       varchar("nombre", { length: 100 }).notNull(),
   email:        varchar("email", { length: 150 }).notNull().unique(),
   passwordHash: varchar("password_hash", { length: 255 }).notNull(),
-  rol:          varchar("rol", { length: 20 }).notNull().default("operador"),
+  rol:          varchar("rol", { length: 30 }).notNull().default("tecnico_mantenimiento"),
+  // Valores válidos: 'admin' | 'supervisor' | 'tecnico_abastecimiento' | 'tecnico_mantenimiento'
   isAdmin:      boolean("is_admin").notNull().default(false),
   activo:       boolean("activo").notNull().default(true),
   createdAt:    timestamp("created_at").defaultNow(),
@@ -130,7 +131,8 @@ export const mantenimientos = pgTable("gentrack_mantenimientos", {
   horasAlMomento:          decimal("horas_al_momento", { precision: 10, scale: 2 }),
   gasolinaLitrosAlMomento: decimal("gasolina_litros_al_momento", { precision: 6, scale: 2 }),
   cantidadLitros:          decimal("cantidad_litros", { precision: 6, scale: 2 }),
-  imagenUrl:               varchar("imagen_url", { length: 500 }),
+  imagenesUrl:  jsonb("imagenes_url").default([]),      // array de URLs, mínimo 1 requerido
+  checklistItems: jsonb("checklist_items").default([]), 
   notas:                   text("notas"),
   realizadoEn:             timestamp("realizado_en").notNull().defaultNow(),
 });
@@ -165,6 +167,8 @@ export const mantenimientosPendientes = pgTable("gentrack_mantenimientos_pendien
   tipo:          varchar("tipo", { length: 30 }).notNull(),       // aceite | filtros | encendido | gasolina
   prioridad:     varchar("prioridad", { length: 10 }).notNull(),  // alta | media | baja
   estado:        varchar("estado", { length: 20 }).notNull().default("pendiente"), // pendiente | resuelto
+  grupoDestino: varchar("grupo_destino", { length: 30 }).notNull(), 
+  // 'tecnico_abastecimiento' | 'tecnico_mantenimiento'
   notificado:    boolean("notificado").notNull().default(false),  // para no spamear notificaciones
   creadoEn:      timestamp("creado_en").notNull().defaultNow(),
   resueltaEn:    timestamp("resuelta_en"),                        // se llena cuando el técnico hace el mantenimiento
@@ -193,6 +197,14 @@ export const encendidosAgendados = pgTable("gentrack_encendidos_agendados", {
     estado:       varchar("estado", { length: 20 }).notNull().default("pendiente"), // pendiente | ejecutado | cancelado
     creadoEn:     timestamp("creado_en").notNull().defaultNow(),
     ejecutadoEn:  timestamp("ejecutado_en"),
+});
+
+//Checklist
+export const plantillasChecklist = pgTable("gentrack_plantillas_checklist", {
+  idPlantilla: serial("idPlantilla").primaryKey(),
+  tipo:        varchar("tipo", { length: 30 }).notNull().unique(),
+  pasos:       jsonb("pasos").notNull(), 
+  // [{ orden: 1, descripcion: "Drenar aceite anterior", requiereFoto: true }]
 });
 
 export const nodosRelations = relations(nodos, ({ one, many }) => ({

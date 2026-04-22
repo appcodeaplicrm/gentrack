@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
     View, Text, ScrollView, TouchableOpacity, StyleSheet,
-    ActivityIndicator, Alert, ImageBackground, TextInput, Modal, Switch,
+    ActivityIndicator, Alert, ImageBackground, TextInput, Modal,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
@@ -15,23 +15,39 @@ interface Usuario {
     nombre:    string;
     email:     string;
     rol:       string;
-    isAdmin:   boolean;
     activo:    boolean;
 }
 
-const ROL_OPCIONES = ['operador', 'admin', 'jefe_reportes'];
+// ── Constantes de roles ──────────────────────────────────────────────────────
+const ROL_OPCIONES = [
+    'tecnico_abastecimiento',
+    'tecnico_mantenimiento',
+    'supervisor',
+    'admin',
+];
+
 const ROL_LABEL: Record<string, string> = {
-    admin:         'Administrador',
-    operador:      'Operador',
-    jefe_reportes: 'Jefe de reportes',
-};
-const ROL_COLOR: Record<string, { bg: string; border: string; text: string }> = {
-    admin:         { bg: 'rgba(255,71,87,0.1)',   border: 'rgba(255,71,87,0.3)',   text: '#ff4757' },
-    operador:      { bg: 'rgba(0,229,160,0.1)',   border: 'rgba(0,229,160,0.3)',   text: '#00e5a0' },
-    jefe_reportes: { bg: 'rgba(129,140,248,0.1)', border: 'rgba(129,140,248,0.3)', text: '#818cf8' },
+    tecnico_abastecimiento: 'Téc. Abastecimiento',
+    tecnico_mantenimiento:  'Téc. Mantenimiento',
+    supervisor:             'Supervisor',
+    admin:                  'Administrador',
 };
 
-const FORM_VACIO = { nombre: '', email: '', password: '', rol: 'operador', isAdmin: false };
+const ROL_COLOR: Record<string, { bg: string; border: string; text: string }> = {
+    tecnico_abastecimiento: { bg: 'rgba(0,229,160,0.1)',   border: 'rgba(0,229,160,0.3)',   text: '#00e5a0' },
+    tecnico_mantenimiento:  { bg: 'rgba(129,140,248,0.1)', border: 'rgba(129,140,248,0.3)', text: '#818cf8' },
+    supervisor:             { bg: 'rgba(255,159,67,0.1)',  border: 'rgba(255,159,67,0.3)',  text: '#ff9f43' },
+    admin:                  { bg: 'rgba(255,71,87,0.1)',   border: 'rgba(255,71,87,0.3)',   text: '#ff4757' },
+};
+
+const ROL_ICON: Record<string, string> = {
+    tecnico_abastecimiento: 'water-outline',
+    tecnico_mantenimiento:  'construct-outline',
+    supervisor:             'eye-outline',
+    admin:                  'shield-checkmark',
+};
+
+const FORM_VACIO = { nombre: '', email: '', password: '', rol: 'tecnico_abastecimiento' };
 
 export default function AdminUsuarios() {
     const { fetchConAuth } = useAuth();
@@ -59,7 +75,7 @@ export default function AdminUsuarios() {
     const abrirCrear = () => { setEditando(null); setForm(FORM_VACIO); setModal(true); };
     const abrirEditar = (u: Usuario) => {
         setEditando(u);
-        setForm({ nombre: u.nombre, email: u.email, password: '', rol: u.rol, isAdmin: u.isAdmin });
+        setForm({ nombre: u.nombre, email: u.email, password: '', rol: u.rol });
         setModal(true);
     };
 
@@ -68,11 +84,13 @@ export default function AdminUsuarios() {
         if (!editando && !form.password)  return Alert.alert('Error', 'La contraseña es requerida');
         setGuardando(true);
         try {
-            const body: any = { nombre: form.nombre, email: form.email, rol: form.rol, isAdmin: form.isAdmin };
+            const body: any = { nombre: form.nombre, email: form.email, rol: form.rol };
             if (form.password) body.password = form.password;
-            const res  = editando
+
+            const res = editando
                 ? await fetchConAuth(`${API_URL}/api/usuarios/${editando.idUsuario}`, { method: 'PUT',  body: JSON.stringify(body) })
                 : await fetchConAuth(`${API_URL}/api/usuarios`,                        { method: 'POST', body: JSON.stringify(body) });
+
             const json = await res.json();
             if (!res.ok) throw new Error(json.error);
             setModal(false);
@@ -95,7 +113,7 @@ export default function AdminUsuarios() {
                     style: u.activo ? 'destructive' : 'default',
                     onPress: async () => {
                         try {
-                            const res  = u.activo
+                            const res = u.activo
                                 ? await fetchConAuth(`${API_URL}/api/usuarios/${u.idUsuario}`, { method: 'DELETE' })
                                 : await fetchConAuth(`${API_URL}/api/usuarios/${u.idUsuario}`, { method: 'PUT', body: JSON.stringify({ activo: true }) });
                             const json = await res.json();
@@ -163,22 +181,29 @@ export default function AdminUsuarios() {
                         </View>
                     ) : (
                         usuariosFiltrados.map(u => {
-                            const rolStyle = ROL_COLOR[u.rol] ?? ROL_COLOR.operador;
+                            const rolStyle = ROL_COLOR[u.rol] ?? ROL_COLOR.tecnico_abastecimiento;
+                            const rolIcon  = ROL_ICON[u.rol]  ?? 'person-outline';
+                            const esElevado = u.rol === 'admin' || u.rol === 'supervisor';
                             return (
                                 <View key={u.idUsuario} style={[s.card, !u.activo && s.cardInactivo]}>
                                     <View style={s.cardTop}>
-                                        <View style={[s.avatarBox, !u.activo && { borderColor: 'rgba(255,255,255,0.1)' }]}>
-                                            <Text style={[s.avatarText, !u.activo && { color: COLORS.textMuted }]}>
+                                        <View style={[s.avatarBox, { borderColor: rolStyle.border, backgroundColor: rolStyle.bg }, !u.activo && { borderColor: 'rgba(255,255,255,0.1)', backgroundColor: 'transparent' }]}>
+                                            <Text style={[s.avatarText, { color: rolStyle.text }, !u.activo && { color: COLORS.textMuted }]}>
                                                 {u.nombre.charAt(0).toUpperCase()}
                                             </Text>
                                         </View>
                                         <View style={{ flex: 1 }}>
                                             <View style={s.nombreRow}>
                                                 <Text style={[s.nombre, !u.activo && s.textoInactivo]}>{u.nombre}</Text>
-                                                {u.isAdmin && (
-                                                    <View style={s.adminBadge}>
-                                                        <Ionicons name="shield-checkmark" size={10} color="#ff9f43" />
-                                                        <Text style={s.adminBadgeText}>Admin</Text>
+                                                {esElevado && (
+                                                    <View style={[
+                                                        s.rolElevadoBadge,
+                                                        { backgroundColor: rolStyle.bg, borderColor: rolStyle.border },
+                                                    ]}>
+                                                        <Ionicons name={rolIcon as any} size={10} color={rolStyle.text} />
+                                                        <Text style={[s.rolElevadoBadgeText, { color: rolStyle.text }]}>
+                                                            {u.rol === 'admin' ? 'Admin' : 'Supervisor'}
+                                                        </Text>
                                                     </View>
                                                 )}
                                                 {!u.activo && (
@@ -189,6 +214,7 @@ export default function AdminUsuarios() {
                                             </View>
                                             <Text style={s.email}>{u.email}</Text>
                                             <View style={[s.rolChip, { backgroundColor: rolStyle.bg, borderColor: rolStyle.border }]}>
+                                                <Ionicons name={rolIcon as any} size={9} color={rolStyle.text} style={{ marginRight: 4 }} />
                                                 <Text style={[s.rolText, { color: rolStyle.text }]}>{ROL_LABEL[u.rol] ?? u.rol}</Text>
                                             </View>
                                         </View>
@@ -254,44 +280,39 @@ export default function AdminUsuarios() {
                                 </View>
                             ))}
 
+                            {/* Selector de rol */}
                             <View style={m.campo}>
                                 <Text style={m.label}>Rol</Text>
-                                <View style={m.rolesRow}>
+                                <View style={m.rolesGrid}>
                                     {ROL_OPCIONES.map(r => {
-                                        const rs = ROL_COLOR[r];
+                                        const rs     = ROL_COLOR[r];
+                                        const icon   = ROL_ICON[r];
                                         const activo = form.rol === r;
                                         return (
                                             <TouchableOpacity
                                                 key={r}
-                                                style={[m.rolChip, activo && { backgroundColor: rs.bg, borderColor: rs.border }]}
+                                                style={[m.rolCard, activo && { backgroundColor: rs.bg, borderColor: rs.border }]}
                                                 onPress={() => setForm(prev => ({ ...prev, rol: r }))}
                                             >
-                                                <Text style={[m.rolChipText, activo && { color: rs.text }]}>
+                                                <View style={[m.rolCardIcon, activo && { backgroundColor: rs.bg, borderColor: rs.border }]}>
+                                                    <Ionicons name={icon as any} size={18} color={activo ? rs.text : COLORS.textMuted} />
+                                                </View>
+                                                <Text style={[m.rolCardText, activo && { color: rs.text }]}>
                                                     {ROL_LABEL[r]}
                                                 </Text>
+                                                {activo && (
+                                                    <View style={[m.rolCardCheck, { backgroundColor: rs.bg, borderColor: rs.border }]}>
+                                                        <Ionicons name="checkmark" size={10} color={rs.text} />
+                                                    </View>
+                                                )}
                                             </TouchableOpacity>
                                         );
                                     })}
                                 </View>
                             </View>
 
-                            <View style={m.switchRow}>
-                                <View style={m.switchLeft}>
-                                    <View style={m.switchIcon}>
-                                        <Ionicons name="shield-checkmark-outline" size={16} color="#ff9f43" />
-                                    </View>
-                                    <View>
-                                        <Text style={m.switchLabel}>Administrador</Text>
-                                        <Text style={m.switchDesc}>Acceso total al sistema</Text>
-                                    </View>
-                                </View>
-                                <Switch
-                                    value={form.isAdmin}
-                                    onValueChange={v => setForm(prev => ({ ...prev, isAdmin: v }))}
-                                    trackColor={{ false: 'rgba(255,255,255,0.1)', true: 'rgba(255,159,67,0.4)' }}
-                                    thumbColor={form.isAdmin ? '#ff9f43' : '#fff'}
-                                />
-                            </View>
+                            {/* Info de permisos del rol seleccionado */}
+                            <RolInfo rol={form.rol} />
 
                             <TouchableOpacity style={m.guardarBtn} onPress={guardar} disabled={guardando}>
                                 {guardando
@@ -307,62 +328,109 @@ export default function AdminUsuarios() {
     );
 }
 
+// ── Componente de info de permisos ───────────────────────────────────────────
+const ROL_PERMISOS: Record<string, { texto: string; icono: string; color: string }[]> = {
+    tecnico_abastecimiento: [
+        { texto: 'Registrar recargas de combustible', icono: 'checkmark-circle',  color: '#00e5a0' },
+        { texto: 'Encender / apagar remotamente',     icono: 'close-circle',      color: '#ff4757' },
+    ],
+    tecnico_mantenimiento: [
+        { texto: 'Registrar cambios de aceite, filtro y batería', icono: 'checkmark-circle', color: '#818cf8' },
+        { texto: 'Encender / apagar remotamente',                 icono: 'close-circle',     color: '#ff4757' },
+    ],
+    supervisor: [
+        { texto: 'Supervisar técnicos de ambos tipos', icono: 'checkmark-circle', color: '#ff9f43' },
+        { texto: 'Encender / apagar remotamente',      icono: 'checkmark-circle', color: '#ff9f43' },
+        { texto: 'Gestionar usuarios',                 icono: 'close-circle',     color: '#ff4757' },
+    ],
+    admin: [
+        { texto: 'Acceso total al sistema',    icono: 'checkmark-circle', color: '#ff4757' },
+        { texto: 'Gestionar usuarios',         icono: 'checkmark-circle', color: '#ff4757' },
+        { texto: 'Encender / apagar remotamente', icono: 'checkmark-circle', color: '#ff4757' },
+    ],
+};
+
+function RolInfo({ rol }: { rol: string }) {
+    const permisos = ROL_PERMISOS[rol];
+    const color    = ROL_COLOR[rol]?.text ?? '#fff';
+    const border   = ROL_COLOR[rol]?.border ?? 'rgba(255,255,255,0.1)';
+    const bg       = ROL_COLOR[rol]?.bg     ?? 'rgba(255,255,255,0.05)';
+    if (!permisos) return null;
+    return (
+        <View style={[p.card, { borderColor: border, backgroundColor: bg }]}>
+            <Text style={[p.titulo, { color }]}>Permisos de {ROL_LABEL[rol]}</Text>
+            {permisos.map((perm, i) => (
+                <View key={i} style={p.fila}>
+                    <Ionicons name={perm.icono as any} size={14} color={perm.color} />
+                    <Text style={p.texto}>{perm.texto}</Text>
+                </View>
+            ))}
+        </View>
+    );
+}
+
+const p = StyleSheet.create({
+    card:   { borderRadius: 12, borderWidth: 1, padding: 12, marginBottom: 20 },
+    titulo: { fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 10 },
+    fila:   { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 },
+    texto:  { fontSize: 12, color: 'rgba(255,255,255,0.6)' },
+});
+
+// ── Estilos principales ──────────────────────────────────────────────────────
 const s = StyleSheet.create({
-    container:    { flex: 1, backgroundColor: COLORS.background },
-    overlay:      { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,5,20,0.55)' },
-    center:       { flex: 1, alignItems: 'center', justifyContent: 'center' },
-    header:       { flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 20, paddingTop: 60, paddingBottom: 12 },
-    backBtn:      { width: 40, height: 40, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.07)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
-    title:        { fontSize: 20, fontWeight: '800', color: COLORS.textPrimary },
-    subtitle:     { fontSize: 12, color: COLORS.textMuted, marginTop: 1 },
-    addBtn:       { width: 40, height: 40, borderRadius: 12, backgroundColor: 'rgba(0,229,160,0.1)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(0,229,160,0.3)' },
-    searchContainer: { flexDirection: 'row', alignItems: 'center', marginHorizontal: 20, marginBottom: 14, backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' },
-    searchInput:  { flex: 1, paddingHorizontal: 10, paddingVertical: 11, color: COLORS.textPrimary, fontSize: 14 },
-    scroll:       { paddingHorizontal: 20 },
-    card:         { backgroundColor: 'rgba(8,15,40,0.75)', borderRadius: 16, padding: 14, borderWidth: 1, borderColor: 'rgba(21,96,218,0.35)', marginBottom: 10 },
-    cardInactivo: { opacity: 0.5 },
-    cardTop:      { flexDirection: 'row', alignItems: 'center', gap: 12 },
-    avatarBox:    { width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(0,229,160,0.1)', borderWidth: 1, borderColor: 'rgba(0,229,160,0.25)', alignItems: 'center', justifyContent: 'center' },
-    avatarText:   { fontSize: 18, fontWeight: '800', color: COLORS.primary },
-    nombreRow:    { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 2 },
-    nombre:       { fontSize: 14, fontWeight: '700', color: COLORS.textPrimary },
-    textoInactivo:{ color: COLORS.textMuted },
-    email:        { fontSize: 12, color: COLORS.textMuted, marginBottom: 6 },
-    rolChip:      { alignSelf: 'flex-start', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 3, borderWidth: 1 },
-    rolText:      { fontSize: 10, fontWeight: '700' },
-    adminBadge:   { flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: 'rgba(255,159,67,0.12)', borderRadius: 20, paddingHorizontal: 8, paddingVertical: 2, borderWidth: 1, borderColor: 'rgba(255,159,67,0.3)' },
-    adminBadgeText: { fontSize: 9, fontWeight: '700', color: '#ff9f43' },
-    inactivoBadge:{ backgroundColor: 'rgba(255,71,87,0.1)', borderRadius: 20, paddingHorizontal: 8, paddingVertical: 2, borderWidth: 1, borderColor: 'rgba(255,71,87,0.2)' },
-    inactivoBadgeText: { fontSize: 9, fontWeight: '700', color: '#ff4757' },
-    acciones:     { flexDirection: 'row', gap: 8 },
-    accionBtn:    { width: 34, height: 34, borderRadius: 10, backgroundColor: 'rgba(0,229,160,0.08)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(0,229,160,0.2)' },
-    accionDanger: { backgroundColor: 'rgba(255,71,87,0.08)', borderColor: 'rgba(255,71,87,0.2)' },
-    accionSuccess:{ backgroundColor: 'rgba(0,229,160,0.08)', borderColor: 'rgba(0,229,160,0.2)' },
-    emptyCard:    { alignItems: 'center', gap: 12, paddingVertical: 60 },
-    emptyText:    { fontSize: 14, color: COLORS.textMuted },
+    container:          { flex: 1, backgroundColor: COLORS.background },
+    overlay:            { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,5,20,0.55)' },
+    center:             { flex: 1, alignItems: 'center', justifyContent: 'center' },
+    header:             { flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 20, paddingTop: 60, paddingBottom: 12 },
+    backBtn:            { width: 40, height: 40, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.07)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
+    title:              { fontSize: 20, fontWeight: '800', color: COLORS.textPrimary },
+    subtitle:           { fontSize: 12, color: COLORS.textMuted, marginTop: 1 },
+    addBtn:             { width: 40, height: 40, borderRadius: 12, backgroundColor: 'rgba(0,229,160,0.1)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(0,229,160,0.3)' },
+    searchContainer:    { flexDirection: 'row', alignItems: 'center', marginHorizontal: 20, marginBottom: 14, backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' },
+    searchInput:        { flex: 1, paddingHorizontal: 10, paddingVertical: 11, color: COLORS.textPrimary, fontSize: 14 },
+    scroll:             { paddingHorizontal: 20 },
+    card:               { backgroundColor: 'rgba(8,15,40,0.75)', borderRadius: 16, padding: 14, borderWidth: 1, borderColor: 'rgba(21,96,218,0.35)', marginBottom: 10 },
+    cardInactivo:       { opacity: 0.5 },
+    cardTop:            { flexDirection: 'row', alignItems: 'center', gap: 12 },
+    avatarBox:          { width: 44, height: 44, borderRadius: 22, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
+    avatarText:         { fontSize: 18, fontWeight: '800' },
+    nombreRow:          { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 2 },
+    nombre:             { fontSize: 14, fontWeight: '700', color: COLORS.textPrimary },
+    textoInactivo:      { color: COLORS.textMuted },
+    email:              { fontSize: 12, color: COLORS.textMuted, marginBottom: 6 },
+    rolChip:            { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 3, borderWidth: 1 },
+    rolText:            { fontSize: 10, fontWeight: '700' },
+    rolElevadoBadge:    { flexDirection: 'row', alignItems: 'center', gap: 3, borderRadius: 20, paddingHorizontal: 8, paddingVertical: 2, borderWidth: 1 },
+    rolElevadoBadgeText:{ fontSize: 9, fontWeight: '700' },
+    inactivoBadge:      { backgroundColor: 'rgba(255,71,87,0.1)', borderRadius: 20, paddingHorizontal: 8, paddingVertical: 2, borderWidth: 1, borderColor: 'rgba(255,71,87,0.2)' },
+    inactivoBadgeText:  { fontSize: 9, fontWeight: '700', color: '#ff4757' },
+    acciones:           { flexDirection: 'row', gap: 8 },
+    accionBtn:          { width: 34, height: 34, borderRadius: 10, backgroundColor: 'rgba(0,229,160,0.08)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(0,229,160,0.2)' },
+    accionDanger:       { backgroundColor: 'rgba(255,71,87,0.08)', borderColor: 'rgba(255,71,87,0.2)' },
+    accionSuccess:      { backgroundColor: 'rgba(0,229,160,0.08)', borderColor: 'rgba(0,229,160,0.2)' },
+    emptyCard:          { alignItems: 'center', gap: 12, paddingVertical: 60 },
+    emptyText:          { fontSize: 14, color: COLORS.textMuted },
 });
 
 const m = StyleSheet.create({
-    overlay:     { flex: 1, backgroundColor: 'rgba(0,0,0,0.65)', justifyContent: 'flex-end' },
-    sheet:       { backgroundColor: '#080f28', borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: 24, paddingBottom: 48, maxHeight: '92%', borderWidth: 1, borderColor: 'rgba(21,96,218,0.3)' },
-    handle:      { width: 40, height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.15)', alignSelf: 'center', marginBottom: 20 },
-    sheetHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24 },
-    sheetTitle:  { fontSize: 18, fontWeight: '800', color: COLORS.textPrimary },
+    overlay:      { flex: 1, backgroundColor: 'rgba(0,0,0,0.65)', justifyContent: 'flex-end' },
+    sheet:        { backgroundColor: '#080f28', borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: 24, paddingBottom: 48, maxHeight: '92%', borderWidth: 1, borderColor: 'rgba(21,96,218,0.3)' },
+    handle:       { width: 40, height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.15)', alignSelf: 'center', marginBottom: 20 },
+    sheetHeader:  { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24 },
+    sheetTitle:   { fontSize: 18, fontWeight: '800', color: COLORS.textPrimary },
     sheetSubtitle:{ fontSize: 12, color: COLORS.textMuted, marginTop: 3 },
-    closeBtn:    { width: 32, height: 32, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.06)', alignItems: 'center', justifyContent: 'center' },
-    campo:       { marginBottom: 18 },
-    label:       { fontSize: 11, color: COLORS.textMuted, marginBottom: 8, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.8 },
-    inputRow:    { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
-    inputIcon:   { marginLeft: 12 },
-    input:       { flex: 1, padding: 13, color: COLORS.textPrimary, fontSize: 14 },
-    rolesRow:    { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-    rolChip:     { paddingHorizontal: 14, paddingVertical: 9, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.05)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
-    rolChipText: { fontSize: 12, color: COLORS.textMuted, fontWeight: '600' },
-    switchRow:   { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: 'rgba(255,159,67,0.06)', borderRadius: 14, padding: 14, borderWidth: 1, borderColor: 'rgba(255,159,67,0.15)', marginBottom: 20 },
-    switchLeft:  { flexDirection: 'row', alignItems: 'center', gap: 12 },
-    switchIcon:  { width: 34, height: 34, borderRadius: 10, backgroundColor: 'rgba(255,159,67,0.1)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,159,67,0.25)' },
-    switchLabel: { fontSize: 14, fontWeight: '700', color: COLORS.textPrimary },
-    switchDesc:  { fontSize: 11, color: COLORS.textMuted, marginTop: 2 },
-    guardarBtn:  { backgroundColor: COLORS.primary, borderRadius: 14, paddingVertical: 15, alignItems: 'center' },
-    guardarText: { color: '#fff', fontWeight: '800', fontSize: 15 },
+    closeBtn:     { width: 32, height: 32, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.06)', alignItems: 'center', justifyContent: 'center' },
+    campo:        { marginBottom: 18 },
+    label:        { fontSize: 11, color: COLORS.textMuted, marginBottom: 8, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.8 },
+    inputRow:     { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
+    inputIcon:    { marginLeft: 12 },
+    input:        { flex: 1, padding: 13, color: COLORS.textPrimary, fontSize: 14 },
+    // Grid de roles: 2 columnas
+    rolesGrid:    { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+    rolCard:      { width: '47%', padding: 14, borderRadius: 14, backgroundColor: 'rgba(255,255,255,0.04)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', position: 'relative' },
+    rolCardIcon:  { width: 36, height: 36, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.06)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', alignItems: 'center', justifyContent: 'center', marginBottom: 10 },
+    rolCardText:  { fontSize: 12, fontWeight: '700', color: COLORS.textMuted },
+    rolCardCheck: { position: 'absolute', top: 10, right: 10, width: 18, height: 18, borderRadius: 9, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
+    guardarBtn:   { backgroundColor: COLORS.primary, borderRadius: 14, paddingVertical: 15, alignItems: 'center', marginTop: 4 },
+    guardarText:  { color: '#fff', fontWeight: '800', fontSize: 15 },
 });

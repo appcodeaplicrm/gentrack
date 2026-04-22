@@ -1,12 +1,40 @@
 import { Router } from 'express';
 import { db } from '../db/db.js';
 import * as schema from '../db/schema.js';
-import { eq, and, inArray, desc, ilike, or, count} from 'drizzle-orm';
+import { eq, and, inArray, desc, ilike, or, count } from 'drizzle-orm';
 import { verificarToken } from '../middleware/auth.js';
+import { requiereRol }    from '../middleware/roles.js';
 import { notificar, NOTIF } from '../services/notificaciones.js';
 import { resolverPendiente } from '../services/mantenimientos.js';
 
 const router = Router();
+
+// ── Roles y tipos ─────────────────────────────────────────────────────────────
+
+const ROLES_TECNICOS = ['tecnico_abastecimiento', 'tecnico_mantenimiento'];
+
+// Solo rellenar combustible y cambiar aceite le corresponde a abastecimiento
+const TIPOS_ABASTECIMIENTO = ['gasolina', 'aceite'];
+
+// Todo lo relacionado a filtros, batería, encendido y bujías le corresponde a mantenimiento
+const TIPOS_MANTENIMIENTO = [
+    'filtro_aire',
+    'filtro_aceite',
+    'filtro_combustible',
+    'bateria',
+    'encendido',
+    'bujias',
+];
+
+const TODOS_LOS_TIPOS = [...TIPOS_ABASTECIMIENTO, ...TIPOS_MANTENIMIENTO];
+
+// Tipos de filtros que siempre aparecen en la pantalla del técnico de mantenimiento
+const TIPOS_FILTROS_SIEMPRE_VISIBLES = ['filtro_aire', 'filtro_aceite', 'filtro_combustible'];
+
+// Intervalos por horas de uso (en horas)
+const INTERVALO_FILTRO_AIRE_HORAS      = 250;
+const INTERVALO_FILTRO_ACEITE_HORAS    = 300;
+const INTERVALO_FILTRO_COMBUSTIBLE_HORAS = 250;
 
 const registrarEvento = async ({ idGenerador, idUsuario, idApiKey, tipoEvento, origen, metadata }) => {
     await db.insert(schema.eventos).values({
@@ -19,27 +47,47 @@ const registrarEvento = async ({ idGenerador, idUsuario, idApiKey, tipoEvento, o
     });
 };
 
+// ── Helper: horas del último mantenimiento de un tipo ─────────────────────────
+async function getHorasUltimoMant(idGenerador, tipo) {
+    const ultimo = await db.select()
+        .from(schema.mantenimientos)
+        .where(and(
+            eq(schema.mantenimientos.idGenerador, idGenerador),
+            eq(schema.mantenimientos.tipo, tipo)
+        ))
+        .orderBy(desc(schema.mantenimientos.realizadoEn))
+        .limit(1);
+
+    return {
+        horasUltimo: ultimo[0]?.horasAlMomento != null
+            ? parseFloat(ultimo[0].horasAlMomento) / 3600
+            : 0,
+        realizadoEn: ultimo[0]?.realizadoEn || null,
+        idMantenimiento: ultimo[0]?.idMantenimiento || null,
+    };
+}
+
+// ── GET /proximos ─────────────────────────────────────────────────────────────
 router.get('/proximos', verificarToken, async (req, res) => {
     try {
-        const ahora = new Date();
+        const ahora   = new Date();
+        const usuario = req.usuario;
 
         const gens = await db.select({
             idGenerador:            schema.generadores.idGenerador,
             genId:                  schema.generadores.genId,
             horasTotales:           schema.generadores.horasTotales,
             gasolinaActualLitros:   schema.generadores.gasolinaActualLitros,
-            ultimoCambioFiltros:    schema.generadores.ultimoCambioFiltros,
             ultimoEncendidoSemanal: schema.generadores.ultimoEncendidoSemanal,
-            intervalo:              schema.generadoresModelos.intervaloCambioAceite,
             capacidadGasolina:      schema.generadoresModelos.capacidadGasolina,
-            encendidoEn:            schema.generadores.encendidoEn,
             consumoGasolinaHoras:   schema.generadoresModelos.consumoGasolinaHoras,
+            encendidoEn:            schema.generadores.encendidoEn,
+            createdAt:              schema.generadores.createdAt,
         })
         .from(schema.generadores)
         .innerJoin(schema.generadoresModelos, eq(schema.generadores.idModelo, schema.generadoresModelos.idModelo))
         .where(eq(schema.generadores.eliminado, false));
 
-        // Pendientes activos — aceite y gasolina los usan para saber si mostrar
         const pendientes = await db.select()
             .from(schema.mantenimientosPendientes)
             .where(eq(schema.mantenimientosPendientes.estado, 'pendiente'));
@@ -48,61 +96,38 @@ router.get('/proximos', verificarToken, async (req, res) => {
         for (const p of pendientes) {
             pendientesMap[`${p.idGenerador}-${p.tipo}`] = p;
         }
+        //console.log('PENDIENTES MAP KEYS:', Object.keys(pendientesMap));
+        //console.log('GENERADORES IDs:', gens.map(g => g.idGenerador));
+
+        //console.log('usuario del token:', usuario.rol, usuario.isAdmin);
+        const esTecnico       = ROLES_TECNICOS.includes(usuario.rol) && !usuario.isAdmin;
+        const grupoDelUsuario = usuario.rol === 'tecnico_abastecimiento'
+            ? 'tecnico_abastecimiento'
+            : usuario.rol === 'tecnico_mantenimiento'
+                ? 'tecnico_mantenimiento'
+                : null;
 
         const data = await Promise.all(gens.map(async (g) => {
             const resultado = [];
 
-            // Horas reales en tiempo real (incluyendo sesión activa)
+            // ── Horas dinámicas ───────────────────────────────────────────
+            // horasTotales está en segundos en la DB
             const horasGuardadas = parseFloat(g.horasTotales || 0) / 3600;
             const horasSesion    = g.encendidoEn
                 ? (ahora - new Date(g.encendidoEn)) / 1000 / 3600
                 : 0;
-            const horasActuales = horasGuardadas + horasSesion;
+            const horasActuales  = horasGuardadas + horasSesion;
 
-            // ── 1. ACEITE — solo si tiene pendiente ──────────────────────
-            const pendienteAceite = pendientesMap[`${g.idGenerador}-aceite`];
-            if (pendienteAceite) {
-                const ultimoAceite = await db.select()
-                    .from(schema.mantenimientos)
-                    .where(and(
-                        eq(schema.mantenimientos.idGenerador, g.idGenerador),
-                        eq(schema.mantenimientos.tipo, 'aceite')
-                    ))
-                    .orderBy(desc(schema.mantenimientos.realizadoEn))
-                    .limit(1);
-
-                const horasUltimoAceite    = ultimoAceite[0]?.horasAlMomento != null
-                    ? parseFloat(ultimoAceite[0].horasAlMomento) / 3600
-                    : 0;
-                const horasDesdeAceite     = horasActuales - horasUltimoAceite;
-                const horasFaltantesAceite = Math.max(0, parseInt(g.intervalo) - horasDesdeAceite);
-                const progresoAceite       = Math.min(1, horasDesdeAceite / parseInt(g.intervalo));
-
-                resultado.push({
-                    idMantenimiento: ultimoAceite[0]?.idMantenimiento || `new-aceite-${g.idGenerador}`,
-                    idPendiente:     pendienteAceite.idPendiente,
-                    tienePendiente:  true,
-                    idGenerador:     g.idGenerador,
-                    genId:           g.genId,
-                    tipo:            'aceite',
-                    label:           'Cambio de Aceite',
-                    horasTotales:    horasActuales,
-                    horasFaltantes:  Math.round(horasFaltantesAceite * 100) / 100,
-                    progreso:        parseFloat(progresoAceite.toFixed(2)),
-                    prioridad:       pendienteAceite.prioridad,
-                    meta:            `Cada ${g.intervalo}h de uso`,
-                });
-            }
-
-            // ── 2. GASOLINA — solo si tiene pendiente ────────────────────
+            // ── Gasolina (solo si hay pendiente) ──────────────────────────
             const pendienteGas = pendientesMap[`${g.idGenerador}-gasolina`];
+
+            //console.log(`[GEN ${g.idGenerador}] key buscada: ${g.idGenerador}-gasolina`);
+            //console.log(`[GEN ${g.idGenerador}] pendienteGas:`, pendienteGas);
             if (pendienteGas) {
                 const capacidad       = parseFloat(g.capacidadGasolina);
                 const litrosGuardados = parseFloat(g.gasolinaActualLitros);
                 const consumoHora     = parseFloat(g.consumoGasolinaHoras);
-
-                // Litros reales descontando consumo de sesión activa
-                const litrosReales = g.encendidoEn
+                const litrosReales    = g.encendidoEn
                     ? Math.max(0, litrosGuardados - (horasSesion * consumoHora))
                     : litrosGuardados;
                 const porcentaje = litrosReales / capacidad;
@@ -114,12 +139,13 @@ router.get('/proximos', verificarToken, async (req, res) => {
                     idGenerador:      g.idGenerador,
                     genId:            g.genId,
                     tipo:             'gasolina',
+                    grupoDestino:     'tecnico_abastecimiento',
                     label:            'Llenado de Combustible',
-                    horasTotales:     horasActuales,
+                    horasActuales,
                     horasFaltantes:   null,
                     progreso:         parseFloat(porcentaje.toFixed(2)),
                     prioridad:        pendienteGas.prioridad,
-                    meta:             'Recargar cuando baje del 40%',
+                    meta:             'Recargar cuando baje del 60%',
                     extra: {
                         litrosActuales:       litrosReales,
                         capacidad,
@@ -130,82 +156,181 @@ router.get('/proximos', verificarToken, async (req, res) => {
                 });
             }
 
-            // ── 3. FILTROS — siempre visible, cálculo dinámico ───────────
-            const INTERVALO_FILTROS_MS = 90 * 24 * 60 * 60 * 1000;
-            const pendienteFiltros     = pendientesMap[`${g.idGenerador}-filtros`];
+            // ── Aceite (solo si hay pendiente) ────────────────────────────
+            const pendienteAceite = pendientesMap[`${g.idGenerador}-aceite`];
+            if (pendienteAceite) {
+                const { horasUltimo, idMantenimiento: idMantAceite } = await getHorasUltimoMant(g.idGenerador, 'aceite');
+                const horasDesde    = horasActuales - horasUltimo;
+                const horasFaltan   = Math.max(0, 150 - horasDesde);
+                const progreso      = Math.min(1, horasDesde / 150);
 
-            const ultimoFiltro = await db.select()
-                .from(schema.mantenimientos)
-                .where(and(
-                    eq(schema.mantenimientos.idGenerador, g.idGenerador),
-                    eq(schema.mantenimientos.tipo, 'filtros')
-                ))
-                .orderBy(desc(schema.mantenimientos.realizadoEn))
-                .limit(1);
+                resultado.push({
+                    idMantenimiento: idMantAceite || `new-aceite-${g.idGenerador}`,
+                    idPendiente:     pendienteAceite.idPendiente,
+                    tienePendiente:  true,
+                    idGenerador:     g.idGenerador,
+                    genId:           g.genId,
+                    tipo:            'aceite',
+                    grupoDestino:    'tecnico_abastecimiento',
+                    label:           'Cambio de Aceite',
+                    horasActuales,
+                    horasFaltantes:  Math.round(horasFaltan * 100) / 100,
+                    progreso:        parseFloat(progreso.toFixed(2)),
+                    prioridad:       pendienteAceite.prioridad,
+                    meta:            'Cada 150h de uso',
+                });
+            }
 
-            const fechaUltimoFiltro = ultimoFiltro[0]?.realizadoEn || g.ultimoCambioFiltros || null;
-            const msPasadosFiltros  = fechaUltimoFiltro ? ahora - new Date(fechaUltimoFiltro) : INTERVALO_FILTROS_MS;
-            const msFaltanFiltros   = Math.max(0, INTERVALO_FILTROS_MS - msPasadosFiltros);
-            const diasFaltanFiltros = Math.round(msFaltanFiltros / (24 * 60 * 60 * 1000));
-            const progresoFiltros   = Math.min(1, msPasadosFiltros / INTERVALO_FILTROS_MS);
+            // ── Filtros — SIEMPRE VISIBLES ────────────────────────────────
+            // filtro_aire: 250h | filtro_aceite: 300h | filtro_combustible: 250h
+            const FILTROS_CONFIG = [
+                { tipo: 'filtro_aire',        intervalo: INTERVALO_FILTRO_AIRE_HORAS,        label: 'Filtro de Aire',        meta: 'Cada 250h de uso' },
+                { tipo: 'filtro_aceite',      intervalo: INTERVALO_FILTRO_ACEITE_HORAS,      label: 'Filtro de Aceite',      meta: 'Cada 300h de uso' },
+                { tipo: 'filtro_combustible', intervalo: INTERVALO_FILTRO_COMBUSTIBLE_HORAS, label: 'Filtro de Combustible', meta: 'Cada 250h de uso' },
+            ];
 
-            resultado.push({
-                idMantenimiento: ultimoFiltro[0]?.idMantenimiento || `new-filtros-${g.idGenerador}`,
-                idPendiente:     pendienteFiltros?.idPendiente || null,
-                tienePendiente:  !!pendienteFiltros,
-                idGenerador:     g.idGenerador,
-                genId:           g.genId,
-                tipo:            'filtros',
-                label:           'Cambio de Filtros',
-                horasTotales:    horasActuales,
-                horasFaltantes:  diasFaltanFiltros,
-                progreso:        parseFloat(progresoFiltros.toFixed(2)),
-                prioridad:       pendienteFiltros?.prioridad
-                                    || (diasFaltanFiltros <= 7 ? 'alta' : diasFaltanFiltros <= 20 ? 'media' : 'baja'),
-                meta:            'Cada 3 meses',
-                extra:           { diasFaltantes: diasFaltanFiltros, proximaFecha: new Date(Date.now() + msFaltanFiltros) },
-            });
+            for (const fc of FILTROS_CONFIG) {
+                const pendienteFiltro = pendientesMap[`${g.idGenerador}-${fc.tipo}`];
+                const { horasUltimo, idMantenimiento: idMantF } = await getHorasUltimoMant(g.idGenerador, fc.tipo);
+                const horasDesde  = horasActuales - horasUltimo;
+                const horasFaltan = Math.max(0, fc.intervalo - horasDesde);
+                const progreso    = Math.min(1, horasDesde / fc.intervalo);
 
-            // ── 4. ENCENDIDO — siempre visible, cálculo dinámico ─────────
-            const INTERVALO_ENCENDIDO_MS = 5 * 24 * 60 * 60 * 1000; // 5 días
-            const pendienteEnc           = pendientesMap[`${g.idGenerador}-encendido`];
+                // Prioridad visual cuando no hay pendiente
+                const prioridad = pendienteFiltro?.prioridad
+                    || (horasFaltan <= 0 ? 'alta' : horasFaltan <= 20 ? 'media' : 'baja');
 
-            const ultimaSesion = await db.select({ inicio: schema.sesionesOperacion.inicio })
-                .from(schema.sesionesOperacion)
-                .where(eq(schema.sesionesOperacion.idGenerador, g.idGenerador))
-                .orderBy(desc(schema.sesionesOperacion.inicio))
-                .limit(1);
+                resultado.push({
+                    idMantenimiento: idMantF || `new-${fc.tipo}-${g.idGenerador}`,
+                    idPendiente:     pendienteFiltro?.idPendiente || null,
+                    tienePendiente:  !!pendienteFiltro,
+                    idGenerador:     g.idGenerador,
+                    genId:           g.genId,
+                    tipo:            fc.tipo,
+                    grupoDestino:    'tecnico_mantenimiento',
+                    label:           fc.label,
+                    horasActuales,
+                    horasFaltantes:  Math.round(horasFaltan * 100) / 100,
+                    progreso:        parseFloat(progreso.toFixed(2)),
+                    prioridad,
+                    meta:            fc.meta,
+                    extra:           { horasDesde: Math.round(horasDesde * 100) / 100, intervalo: fc.intervalo },
+                });
+            }
 
-            const fechaUltimoEnc = ultimaSesion[0]?.inicio || g.ultimoEncendidoSemanal || null;
-            const msPasadosEnc   = fechaUltimoEnc ? ahora - new Date(fechaUltimoEnc) : INTERVALO_ENCENDIDO_MS;
-            const msFaltanEnc    = Math.max(0, INTERVALO_ENCENDIDO_MS - msPasadosEnc);
-            const diasFaltanEnc  = Math.round(msFaltanEnc / (24 * 60 * 60 * 1000));
-            const progresoEnc    = Math.min(1, msPasadosEnc / INTERVALO_ENCENDIDO_MS);
+            // ── Batería (solo si hay pendiente) ───────────────────────────
+            const pendienteBat = pendientesMap[`${g.idGenerador}-bateria`];
+            if (pendienteBat) {
+                const INTERVALO_BAT_MS = 6 * 24 * 60 * 60 * 1000;
 
-            resultado.push({
-                idMantenimiento: `enc-${g.idGenerador}`,
-                idPendiente:     pendienteEnc?.idPendiente || null,
-                tienePendiente:  !!pendienteEnc,
-                idGenerador:     g.idGenerador,
-                genId:           g.genId,
-                tipo:            'encendido',
-                label:           'Encendido Semanal',
-                horasTotales:    horasActuales,
-                horasFaltantes:  diasFaltanEnc,
-                progreso:        parseFloat(progresoEnc.toFixed(2)),
-                prioridad:       pendienteEnc?.prioridad
-                                    || (diasFaltanEnc === 0 ? 'alta' : diasFaltanEnc <= 2 ? 'media' : 'baja'),
-                meta:            'Encender al menos 1h cada 5 días',
-                extra:           { diasFaltantes: diasFaltanEnc, ultimoEncendido: fechaUltimoEnc },
-            });
+                const ultimaBat = await db.select()
+                    .from(schema.mantenimientos)
+                    .where(and(
+                        eq(schema.mantenimientos.idGenerador, g.idGenerador),
+                        eq(schema.mantenimientos.tipo, 'bateria')
+                    ))
+                    .orderBy(desc(schema.mantenimientos.realizadoEn))
+                    .limit(1);
+
+                const fechaUltima  = ultimaBat[0]?.realizadoEn || g.createdAt || new Date();
+                const msPasados    = ahora - new Date(fechaUltima);
+                const msFaltan     = Math.max(0, INTERVALO_BAT_MS - msPasados);
+                const diasFaltan   = Math.round(msFaltan / (24 * 60 * 60 * 1000));
+                const progreso     = Math.min(1, msPasados / INTERVALO_BAT_MS);
+
+                resultado.push({
+                    idMantenimiento: ultimaBat[0]?.idMantenimiento || `new-bateria-${g.idGenerador}`,
+                    idPendiente:     pendienteBat.idPendiente,
+                    tienePendiente:  true,
+                    idGenerador:     g.idGenerador,
+                    genId:           g.genId,
+                    tipo:            'bateria',
+                    grupoDestino:    'tecnico_mantenimiento',
+                    label:           'Limpieza de Batería',
+                    horasActuales,
+                    horasFaltantes:  diasFaltan,
+                    progreso:        parseFloat(progreso.toFixed(2)),
+                    prioridad:       pendienteBat.prioridad,
+                    meta:            'Cada 6 días',
+                    extra:           { diasFaltantes: diasFaltan },
+                });
+            }
+
+            // ── Encendido semanal (solo si hay pendiente) ─────────────────
+            const pendienteEnc = pendientesMap[`${g.idGenerador}-encendido`];
+            if (pendienteEnc) {
+                const INTERVALO_ENC_MS = 7 * 24 * 60 * 60 * 1000;
+
+                const ultimaSesion = await db.select({ inicio: schema.sesionesOperacion.inicio })
+                    .from(schema.sesionesOperacion)
+                    .where(eq(schema.sesionesOperacion.idGenerador, g.idGenerador))
+                    .orderBy(desc(schema.sesionesOperacion.inicio))
+                    .limit(1);
+
+                const fechaUltima = ultimaSesion[0]?.inicio || g.ultimoEncendidoSemanal || g.createdAt || new Date();
+                const msPasados   = ahora - new Date(fechaUltima);
+                const msFaltan    = Math.max(0, INTERVALO_ENC_MS - msPasados);
+                const diasFaltan  = Math.round(msFaltan / (24 * 60 * 60 * 1000));
+                const progreso    = Math.min(1, msPasados / INTERVALO_ENC_MS);
+
+                resultado.push({
+                    idMantenimiento: `enc-${g.idGenerador}`,
+                    idPendiente:     pendienteEnc.idPendiente,
+                    tienePendiente:  true,
+                    idGenerador:     g.idGenerador,
+                    genId:           g.genId,
+                    tipo:            'encendido',
+                    grupoDestino:    'tecnico_mantenimiento',
+                    label:           'Encendido Semanal',
+                    horasActuales,
+                    horasFaltantes:  diasFaltan,
+                    progreso:        parseFloat(progreso.toFixed(2)),
+                    prioridad:       pendienteEnc.prioridad,
+                    meta:            'Encender al menos 1h cada 7 días',
+                    extra:           { diasFaltantes: diasFaltan, ultimoEncendido: fechaUltima },
+                });
+            }
+
+            // ── Bujías (solo si hay pendiente) ────────────────────────────
+            const pendienteBuj = pendientesMap[`${g.idGenerador}-bujias`];
+            if (pendienteBuj) {
+                const { horasUltimo, idMantenimiento: idMantBuj } = await getHorasUltimoMant(g.idGenerador, 'bujias');
+                const horasDesde  = horasActuales - horasUltimo;
+                const horasFaltan = Math.max(0, 200 - horasDesde);
+                const progreso    = Math.min(1, horasDesde / 200);
+
+                resultado.push({
+                    idMantenimiento: idMantBuj || `new-bujias-${g.idGenerador}`,
+                    idPendiente:     pendienteBuj.idPendiente,
+                    tienePendiente:  true,
+                    idGenerador:     g.idGenerador,
+                    genId:           g.genId,
+                    tipo:            'bujias',
+                    grupoDestino:    'tecnico_mantenimiento',
+                    label:           'Cambio de Bujías',
+                    horasActuales,
+                    horasFaltantes:  Math.round(horasFaltan * 100) / 100,
+                    progreso:        parseFloat(progreso.toFixed(2)),
+                    prioridad:       pendienteBuj.prioridad,
+                    meta:            'Cada 200h de uso',
+                });
+            }
 
             return resultado;
         }));
 
-        const flat = data.flat().sort((a, b) => {
-            const orden = { alta: 0, media: 1, baja: 2 };
-            return orden[a.prioridad] - orden[b.prioridad];
-        });
+        // Aplanar y ordenar por prioridad
+        const ORDEN_PRIORIDAD = { alta: 0, media: 1, baja: 2 };
+        let flat = data.flat().sort((a, b) => ORDEN_PRIORIDAD[a.prioridad] - ORDEN_PRIORIDAD[b.prioridad]);
+
+        // Filtrar por grupo si es técnico
+        if (esTecnico && grupoDelUsuario) {
+            flat = flat.filter(item => item.grupoDestino === grupoDelUsuario);
+        }
+
+        // ── AGREGA AQUÍ ──
+        //console.log('FLAT antes filtro:', flat.map(f => ({ genId: f.genId, tipo: f.tipo, grupoDestino: f.grupoDestino })));
+        //console.log('esTecnico:', esTecnico, '| grupoDelUsuario:', grupoDelUsuario);
 
         res.status(200).json({ success: true, data: flat });
 
@@ -215,25 +340,28 @@ router.get('/proximos', verificarToken, async (req, res) => {
     }
 });
 
-// ── GET todos los mantenimientos globales (paginado) ─────────────────────────
+// ── GET / (paginado) ──────────────────────────────────────────────────────────
 router.get('/', verificarToken, async (req, res) => {
     try {
         const { tipo, busqueda, limit = '15', offset = '0' } = req.query;
-
+        const usuario   = req.usuario;
         const limitNum  = parseInt(limit);
         const offsetNum = parseInt(offset);
 
         const condiciones = [];
         if (tipo)     condiciones.push(eq(schema.mantenimientos.tipo, tipo));
         if (busqueda) {
-            const q = `%${(busqueda).toLowerCase()}%`;
-            condiciones.push(
-                or(
-                    ilike(schema.nodos.nombre,      q),
-                    ilike(schema.nodos.ubicacion,   q),
-                    ilike(schema.generadores.genId, q),
-                )
-            );
+            const q = `%${busqueda.toLowerCase()}%`;
+            condiciones.push(or(
+                ilike(schema.nodos.nombre,      q),
+                ilike(schema.nodos.ubicacion,   q),
+                ilike(schema.generadores.genId, q),
+            ));
+        }
+
+        const esTecnico = ['tecnico_abastecimiento', 'tecnico_mantenimiento'].includes(usuario.rol) && !usuario.isAdmin;
+        if (esTecnico) {
+            condiciones.push(eq(schema.mantenimientos.idUsuario, usuario.idUsuario));
         }
 
         const rows = await db
@@ -243,7 +371,8 @@ router.get('/', verificarToken, async (req, res) => {
                 horasAlMomento:          schema.mantenimientos.horasAlMomento,
                 gasolinaLitrosAlMomento: schema.mantenimientos.gasolinaLitrosAlMomento,
                 cantidadLitros:          schema.mantenimientos.cantidadLitros,
-                imagenUrl:               schema.mantenimientos.imagenUrl,
+                imagenesUrl:             schema.mantenimientos.imagenesUrl,
+                checklistItems:          schema.mantenimientos.checklistItems,
                 notas:                   schema.mantenimientos.notas,
                 realizadoEn:             schema.mantenimientos.realizadoEn,
                 idGenerador:             schema.mantenimientos.idGenerador,
@@ -280,7 +409,7 @@ router.get('/', verificarToken, async (req, res) => {
     }
 });
 
-// ── GET mantenimientos de un generador ───────────────────────────────────────
+// ── GET /:idGenerador ─────────────────────────────────────────────────────────
 router.get('/:idGenerador', verificarToken, async (req, res) => {
     try {
         const { idGenerador } = req.params;
@@ -295,18 +424,39 @@ router.get('/:idGenerador', verificarToken, async (req, res) => {
     }
 });
 
-// ── GET mantenimientos por tipo ───────────────────────────────────────────────
+// ── GET /plantillas/:tipo ─────────────────────────────────────────────────────
+router.get('/plantillas/:tipo', verificarToken, async (req, res) => {
+    //console.log('Llego')
+    try {
+        const { tipo } = req.params;
+
+        const plantilla = await db.select()
+            .from(schema.plantillasChecklist)
+            .where(eq(schema.plantillasChecklist.tipo, tipo))
+            .limit(1);
+
+        if (plantilla.length === 0) {
+            return res.status(404).json({ success: false, error: 'No hay plantilla para este tipo' });
+        }
+
+        res.status(200).json({ success: true, data: plantilla[0] });
+    } catch (error) {
+        console.log("Es aqui el error")
+        console.error(error);
+        res.status(500).json({ success: false, error: 'Error al obtener plantilla' });
+    }
+});
+
+// ── GET /:idGenerador/:tipo ───────────────────────────────────────────────────
 router.get('/:idGenerador/:tipo', verificarToken, async (req, res) => {
     try {
         const { idGenerador, tipo } = req.params;
 
         const data = await db.select().from(schema.mantenimientos)
-            .where(
-                and(
-                    eq(schema.mantenimientos.idGenerador, idGenerador),
-                    eq(schema.mantenimientos.tipo, tipo)
-                )
-            );
+            .where(and(
+                eq(schema.mantenimientos.idGenerador, idGenerador),
+                eq(schema.mantenimientos.tipo, tipo)
+            ));
 
         res.status(200).json({ success: true, data });
     } catch (error) {
@@ -315,17 +465,51 @@ router.get('/:idGenerador/:tipo', verificarToken, async (req, res) => {
     }
 });
 
-// ── POST registrar mantenimiento ──────────────────────────────────────────────
-router.post('/', verificarToken, async (req, res) => {
+// ── POST / — registrar mantenimiento ─────────────────────────────────────────
+router.post('/', verificarToken, requiereRol('tecnico_abastecimiento', 'tecnico_mantenimiento'), async (req, res) => {
     try {
-        const { idGenerador, tipo, horasAlMomento, gasolinaLitrosAlMomento, cantidadLitros, imagenUrl, notas } = req.body;
+        const {
+            idGenerador,
+            tipo,
+            horasAlMomento,
+            gasolinaLitrosAlMomento,
+            cantidadLitros,
+            imagenesUrl,
+            checklistItems,
+            notas,
+        } = req.body;
 
         if (!idGenerador || !tipo) {
-            return res.status(400).json({ success: false, error: 'Por favor llena los campos necesarios' });
+            return res.status(400).json({ success: false, error: 'idGenerador y tipo son requeridos' });
         }
 
-        if (!['aceite', 'gasolina', 'filtros', 'encendido'].includes(tipo)) {
-            return res.status(400).json({ success: false, error: 'tipo debe ser aceite, gasolina, filtros o encendido' });
+        if (!TODOS_LOS_TIPOS.includes(tipo)) {
+            return res.status(400).json({
+                success: false,
+                error:   `tipo debe ser uno de: ${TODOS_LOS_TIPOS.join(', ')}`,
+            });
+        }
+
+        // Validar que el técnico puede registrar este tipo
+        const { rol } = req.usuario;
+        if (rol === 'tecnico_abastecimiento' && !TIPOS_ABASTECIMIENTO.includes(tipo)) {
+            return res.status(403).json({
+                success: false,
+                error:   `El técnico de abastecimiento solo puede registrar: ${TIPOS_ABASTECIMIENTO.join(', ')}`,
+            });
+        }
+        if (rol === 'tecnico_mantenimiento' && !TIPOS_MANTENIMIENTO.includes(tipo)) {
+            return res.status(403).json({
+                success: false,
+                error:   `El técnico de mantenimiento solo puede registrar: ${TIPOS_MANTENIMIENTO.join(', ')}`,
+            });
+        }
+
+        if (!imagenesUrl || !Array.isArray(imagenesUrl) || imagenesUrl.length === 0) {
+            return res.status(400).json({
+                success: false,
+                error:   'Se requiere al menos 1 foto de evidencia',
+            });
         }
 
         const genInfo = await db.select({
@@ -349,14 +533,15 @@ router.post('/', verificarToken, async (req, res) => {
             horasAlMomento:          horasAlMomento          || null,
             gasolinaLitrosAlMomento: gasolinaLitrosAlMomento || null,
             cantidadLitros:          cantidadLitros          || null,
-            imagenUrl:               imagenUrl               || null,
+            imagenesUrl:             imagenesUrl,
+            checklistItems:          checklistItems          || [],
             notas:                   notas                   || null,
         }).returning();
 
-        // Resolver pendiente si existía
         await resolverPendiente(idGenerador, tipo);
 
-        // ── GASOLINA ──────────────────────────────────────────────────────
+        // ── Lógica por tipo ───────────────────────────────────────────────
+
         if (tipo === 'gasolina' && cantidadLitros) {
             const generador = await db.select({
                 gasolinaActualLitros: schema.generadores.gasolinaActualLitros,
@@ -376,13 +561,11 @@ router.post('/', verificarToken, async (req, res) => {
 
             await db.update(schema.alertas)
                 .set({ leida: true, leidaEn: new Date() })
-                .where(
-                    and(
-                        eq(schema.alertas.idGenerador, idGenerador),
-                        eq(schema.alertas.leida, false),
-                        inArray(schema.alertas.tipo, ['gasolina_baja', 'gasolina_agotada'])
-                    )
-                );
+                .where(and(
+                    eq(schema.alertas.idGenerador, idGenerador),
+                    eq(schema.alertas.leida, false),
+                    inArray(schema.alertas.tipo, ['gasolina_baja', 'gasolina_agotada'])
+                ));
 
             const genEstado = await db.select({
                 estado:               schema.generadores.estado,
@@ -411,26 +594,17 @@ router.post('/', verificarToken, async (req, res) => {
                 metadata:   { cantidadLitros, litrosAntes: litrosActuales, litrosDespues: nuevosLitros },
             });
 
-            await notificar(NOTIF.RECARGA_GASOLINA_REGISTRADA, {
-                genId,
-                nodo,
-                cantidadLitros,
-                litrosDespues: nuevosLitros,
-            });
+            await notificar(NOTIF.RECARGA_GASOLINA_REGISTRADA, { genId, nodo, cantidadLitros, litrosDespues: nuevosLitros });
         }
 
-        // ── ACEITE ────────────────────────────────────────────────────────
         if (tipo === 'aceite') {
-            
             await db.update(schema.alertas)
                 .set({ leida: true, leidaEn: new Date() })
-                .where(
-                    and(
-                        eq(schema.alertas.idGenerador, idGenerador),
-                        eq(schema.alertas.leida, false),
-                        inArray(schema.alertas.tipo, ['aceite_proximo', 'aceite_vencido'])
-                    )
-                );
+                .where(and(
+                    eq(schema.alertas.idGenerador, idGenerador),
+                    eq(schema.alertas.leida, false),
+                    inArray(schema.alertas.tipo, ['aceite_proximo', 'aceite_vencido'])
+                ));
 
             await registrarEvento({
                 idGenerador,
@@ -440,35 +614,9 @@ router.post('/', verificarToken, async (req, res) => {
                 metadata:   { horasAlMomento, notas },
             });
 
-            await notificar(NOTIF.CAMBIO_ACEITE_REGISTRADO, {
-                genId,
-                nodo,
-                horasAlMomento,
-            });
+            await notificar(NOTIF.CAMBIO_ACEITE_REGISTRADO, { genId, nodo, horasAlMomento });
         }
 
-        // ── FILTROS ───────────────────────────────────────────────────────
-        if (tipo === 'filtros') {
-            await db.update(schema.alertas)
-                .set({ leida: true, leidaEn: new Date() })
-                .where(
-                    and(
-                        eq(schema.alertas.idGenerador, idGenerador),
-                        eq(schema.alertas.leida, false),
-                        inArray(schema.alertas.tipo, ['filtros_proximos', 'filtros_vencidos'])
-                    )
-                );
-
-            await registrarEvento({
-                idGenerador,
-                idUsuario:  req.usuario.idUsuario,
-                tipoEvento: 'cambio_filtros',
-                origen:     'usuario',
-                metadata:   { notas },
-            });
-        }
-
-        // ── ENCENDIDO SEMANAL ─────────────────────────────────────────────
         if (tipo === 'encendido') {
             await db.update(schema.generadores)
                 .set({ ultimoEncendidoSemanal: new Date(), updatedAt: new Date() })
@@ -483,6 +631,17 @@ router.post('/', verificarToken, async (req, res) => {
             });
         }
 
+        // Tipos de mantenimiento — evento genérico
+        if (TIPOS_MANTENIMIENTO.includes(tipo) && tipo !== 'encendido') {
+            await registrarEvento({
+                idGenerador,
+                idUsuario:  req.usuario.idUsuario,
+                tipoEvento: `mantenimiento_${tipo}`,
+                origen:     'usuario',
+                metadata:   { notas },
+            });
+        }
+
         res.status(201).json({ success: true });
     } catch (error) {
         console.error(error);
@@ -490,9 +649,13 @@ router.post('/', verificarToken, async (req, res) => {
     }
 });
 
-// ── DELETE eliminar mantenimiento ─────────────────────────────────────────────
-router.delete('/:id', verificarToken, async (req, res) => {
+// ── DELETE /:id ───────────────────────────────────────────────────────────────
+router.delete('/:id', verificarToken, requiereRol(), async (req, res) => {
     try {
+        if (!req.usuario.isAdmin) {
+            return res.status(403).json({ success: false, error: 'Solo administradores pueden eliminar mantenimientos' });
+        }
+
         const { id } = req.params;
 
         const data = await db.delete(schema.mantenimientos)
@@ -516,5 +679,7 @@ router.delete('/:id', verificarToken, async (req, res) => {
         res.status(500).json({ success: false, error: 'Error al eliminar mantenimiento' });
     }
 });
+
+
 
 export default router;

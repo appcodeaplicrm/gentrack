@@ -4,13 +4,29 @@ import { eq, and, desc } from 'drizzle-orm';
 import { notificar, NOTIF } from './notificaciones.js';
 
 // ── UMBRALES ─────────────────────────────────────────────────────────────────
-const UMBRAL_ACEITE_HORAS_DESDE = 130;  // crear pendiente cuando lleva ≥130h desde último cambio
-const UMBRAL_GASOLINA_PCT       = 0.60; // crear pendiente cuando baje del 40%
-const UMBRAL_ENCENDIDO_DIAS     = 0;    // crear pendiente cuando lleva 7 días sin encender
+
+// Basados en horas de uso
+const INTERVALO_ACEITE_HORAS           = 150;
+const INTERVALO_FILTRO_AIRE_HORAS      = 250;
+const INTERVALO_FILTRO_COMBUSTIBLE_HORAS = 250;
+const INTERVALO_FILTRO_ACEITE_HORAS    = 300;
+const INTERVALO_BUJIAS_HORAS           = 200;
+const AVISO_HORAS_ANTES                = 20;  // crear pendiente cuando falten ≤20h
+
+// Basados en días
+const INTERVALO_BATERIA_DIAS           = 6;
+const AVISO_BATERIA_DIAS               = 1;   // avisar con 1 día de anticipación
+
+// Encendido semanal
+const INTERVALO_ENCENDIDO_DIAS         = 7;
+const AVISO_ENCENDIDO_DIAS             = 2;   // avisar al día 5 sin encender (faltan ≤2 días)
+
+// Gasolina
+const UMBRAL_GASOLINA_PCT              = 0.60; // crear pendiente cuando baje del 60%
 
 // ── HELPERS ──────────────────────────────────────────────────────────────────
 
-async function upsertPendiente(idGenerador, tipo, prioridad, metadatos = {}) {
+async function upsertPendiente(idGenerador, tipo, prioridad, metadatos = {}, grupoDestino) {
     const existente = await db.select()
         .from(schema.mantenimientosPendientes)
         .where(and(
@@ -34,7 +50,7 @@ async function upsertPendiente(idGenerador, tipo, prioridad, metadatos = {}) {
     }
 
     const [nuevo] = await db.insert(schema.mantenimientosPendientes)
-        .values({ idGenerador, tipo, prioridad, estado: 'pendiente', notificado: false, metadatos })
+        .values({ idGenerador, tipo, prioridad, estado: 'pendiente', notificado: false, metadatos, grupoDestino })
         .returning();
 
     return { creado: true, pendiente: nuevo };
@@ -55,92 +71,129 @@ export async function resolverPendiente(idGenerador, tipo) {
         ));
 }
 
-// ── VERIFICACIONES ────────────────────────────────────────────────────────────
+// ── HELPER: última verificación basada en horas ───────────────────────────────
+// Busca el último mantenimiento del tipo indicado y devuelve las horas que
+// tenía el generador en ese momento.
+// Si no hay registro previo → horasUltimo = 0 (el contador corre desde el inicio)
 
-async function verificarAceite(gen, horasActuales) {
-    const intervalo = parseInt(gen.intervalo);
-
-    const ultimoAceite = await db.select()
+async function getHorasUltimoMantenimiento(idGenerador, tipo) {
+    const ultimo = await db.select()
         .from(schema.mantenimientos)
         .where(and(
-            eq(schema.mantenimientos.idGenerador, gen.idGenerador),
-            eq(schema.mantenimientos.tipo, 'aceite')
+            eq(schema.mantenimientos.idGenerador, idGenerador),
+            eq(schema.mantenimientos.tipo, tipo)
         ))
         .orderBy(desc(schema.mantenimientos.realizadoEn))
         .limit(1);
 
-    const horasUltimo = ultimoAceite[0]?.horasAlMomento != null ? parseFloat(ultimoAceite[0].horasAlMomento) / 3600 : 0;
+    return ultimo[0]?.horasAlMomento != null
+        ? parseFloat(ultimo[0].horasAlMomento) / 3600
+        : 0;
+}
+
+// ── HELPER: última verificación basada en días ────────────────────────────────
+// Si no hay registro previo → usa new Date() como base para que el contador
+// arranque desde ahora y NO dispare inmediatamente en generadores nuevos.
+
+async function getFechaUltimoMantenimiento(idGenerador, tipo, fallbackFecha = null) {
+    const ultimo = await db.select()
+        .from(schema.mantenimientos)
+        .where(and(
+            eq(schema.mantenimientos.idGenerador, idGenerador),
+            eq(schema.mantenimientos.tipo, tipo)
+        ))
+        .orderBy(desc(schema.mantenimientos.realizadoEn))
+        .limit(1);
+
+    return ultimo[0]?.realizadoEn || fallbackFecha || new Date();
+}
+
+// ── VERIFICACIONES POR HORAS ──────────────────────────────────────────────────
+
+async function verificarMantenimientoPorHoras(gen, horasActuales, tipo, intervaloHoras, grupoDestino) {
+    const horasUltimo  = await getHorasUltimoMantenimiento(gen.idGenerador, tipo);
     const horasDesde   = horasActuales - horasUltimo;
+    const horasFaltan  = Math.max(0, intervaloHoras - horasDesde);
 
-    console.log(`[ACEITE] ${gen.genId} — horasActuales: ${horasActuales.toFixed(4)}h | horasUltimo: ${horasUltimo} | horasDesde: ${horasDesde.toFixed(4)}h | umbral: ${UMBRAL_ACEITE_HORAS_DESDE}h`);
+    console.log(`[${tipo.toUpperCase()}] ${gen.genId} — horasActuales: ${horasActuales.toFixed(2)}h | horasUltimo: ${horasUltimo.toFixed(2)}h | horasDesde: ${horasDesde.toFixed(2)}h | horasFaltan: ${horasFaltan.toFixed(2)}h`);
 
-    if (horasDesde < UMBRAL_ACEITE_HORAS_DESDE) return;
+    if (horasFaltan > AVISO_HORAS_ANTES) return;
 
-    const horasFaltantes = Math.max(0, intervalo - horasDesde);
-    const prioridad      = horasFaltantes <= 10 ? 'alta' : 'media';
+    const prioridad = horasFaltan <= 0 ? 'alta' : 'media';
 
     const { creado, pendiente } = await upsertPendiente(
         gen.idGenerador,
-        'aceite',
+        tipo,
         prioridad,
-        { horasDesde: Math.round(horasDesde * 100) / 100, horasFaltantes: Math.round(horasFaltantes * 100) / 100, intervalo }
+        {
+            horasDesde:  Math.round(horasDesde  * 100) / 100,
+            horasFaltan: Math.round(horasFaltan * 100) / 100,
+            intervalo:   intervaloHoras,
+        },
+        grupoDestino
     );
 
     if (creado) {
+        const etiquetas = {
+            aceite:             'Cambio de aceite',
+            filtro_aire:        'Cambio de filtro de aire',
+            filtro_combustible: 'Cambio de filtro de combustible',
+            filtro_aceite:      'Cambio de filtro de aceite',
+            bujias:             'Cambio de bujías',
+        };
+
+        const titulo  = etiquetas[tipo] ?? `Mantenimiento: ${tipo}`;
+        const mensaje = horasFaltan <= 0
+            ? `${gen.genId}: ${titulo} VENCIDO (${Math.round(horasDesde)}h desde el último)`
+            : `${gen.genId}: ${titulo} en ${horasFaltan.toFixed(0)}h`;
+
         await notificar(NOTIF.MANTENIMIENTO_PENDIENTE, {
             idGenerador: gen.idGenerador,
             genId:       gen.genId,
-            tipo:        'aceite',
-            titulo:      'Cambio de aceite próximo',
-            mensaje:     horasFaltantes <= 0
-                ? `${gen.genId}: cambio de aceite VENCIDO (${Math.round(horasDesde)}h desde el último)`
-                : `${gen.genId}: cambio de aceite en ${horasFaltantes.toFixed(0)}h`,
+            tipo,
+            titulo,
+            mensaje,
             prioridad,
         });
         await marcarNotificado(pendiente.idPendiente);
     }
 }
 
-async function verificarFiltros(gen) {
-    const INTERVALO_MS = 90 * 24 * 60 * 60 * 1000;
+// ── VERIFICACIONES POR DÍAS ───────────────────────────────────────────────────
+
+async function verificarBateria(gen) {
+    const INTERVALO_MS = INTERVALO_BATERIA_DIAS * 24 * 60 * 60 * 1000;
     const ahora        = new Date();
 
-    const ultimoFiltro = await db.select()
-        .from(schema.mantenimientos)
-        .where(and(
-            eq(schema.mantenimientos.idGenerador, gen.idGenerador),
-            eq(schema.mantenimientos.tipo, 'filtros')
-        ))
-        .orderBy(desc(schema.mantenimientos.realizadoEn))
-        .limit(1);
+    // fallback: gen.createdAt para que un generador nuevo arranque desde su fecha de creación
+    const fechaUltimo  = await getFechaUltimoMantenimiento(gen.idGenerador, 'bateria', gen.createdAt);
+    const msPasados    = ahora - new Date(fechaUltimo);
+    const msFaltan     = Math.max(0, INTERVALO_MS - msPasados);
+    const diasFaltan   = Math.round(msFaltan / (24 * 60 * 60 * 1000));
 
-    const fechaUltimo = ultimoFiltro[0]?.realizadoEn || gen.ultimoCambioFiltros || null;
-    const msPasados   = fechaUltimo ? ahora - new Date(fechaUltimo) : INTERVALO_MS;
-    const msFaltan    = Math.max(0, INTERVALO_MS - msPasados);
-    const diasFaltan  = Math.round(msFaltan / (24 * 60 * 60 * 1000));
+    console.log(`[BATERIA] ${gen.genId} — diasFaltan: ${diasFaltan} | fechaUltimo: ${fechaUltimo}`);
 
-    console.log(`[FILTROS] ${gen.genId} — diasFaltan: ${diasFaltan} | fechaUltimo: ${fechaUltimo ?? 'ninguno'}`);
+    if (diasFaltan > AVISO_BATERIA_DIAS) return;
 
-    if (diasFaltan > 7) return;
-
-    const prioridad = diasFaltan <= 3 ? 'alta' : 'media';
+    const prioridad = diasFaltan <= 0 ? 'alta' : 'media';
 
     const { creado, pendiente } = await upsertPendiente(
         gen.idGenerador,
-        'filtros',
+        'bateria',
         prioridad,
-        { diasFaltan, proximaFecha: new Date(Date.now() + msFaltan).toISOString() }
+        { diasFaltan, proximaFecha: new Date(Date.now() + msFaltan).toISOString() },
+        'tecnico_mantenimiento'
     );
 
     if (creado) {
         await notificar(NOTIF.MANTENIMIENTO_PENDIENTE, {
             idGenerador: gen.idGenerador,
             genId:       gen.genId,
-            tipo:        'filtros',
-            titulo:      'Cambio de filtros próximo',
+            tipo:        'bateria',
+            titulo:      'Limpieza de batería próxima',
             mensaje:     diasFaltan <= 0
-                ? `${gen.genId}: cambio de filtros VENCIDO`
-                : `${gen.genId}: cambio de filtros en ${diasFaltan} día(s)`,
+                ? `${gen.genId}: limpieza de batería VENCIDA`
+                : `${gen.genId}: limpieza de batería en ${diasFaltan} día(s)`,
             prioridad,
         });
         await marcarNotificado(pendiente.idPendiente);
@@ -148,29 +201,32 @@ async function verificarFiltros(gen) {
 }
 
 async function verificarEncendidoSemanal(gen) {
-    const INTERVALO_MS = 5 * 24 * 60 * 60 * 1000;
+    const INTERVALO_MS = INTERVALO_ENCENDIDO_DIAS * 24 * 60 * 60 * 1000;
     const ahora        = new Date();
 
+    // Buscar la última sesión de operación
     const ultimaSesion = await db.select({ inicio: schema.sesionesOperacion.inicio })
         .from(schema.sesionesOperacion)
         .where(eq(schema.sesionesOperacion.idGenerador, gen.idGenerador))
         .orderBy(desc(schema.sesionesOperacion.inicio))
         .limit(1);
 
-    const fechaUltimo = ultimaSesion[0]?.inicio || gen.ultimoEncendidoSemanal || null;
-    const msPasados   = fechaUltimo ? ahora - new Date(fechaUltimo) : INTERVALO_MS;
+    // Si nunca ha tenido sesión, usar createdAt del generador como base
+    const fechaUltimo = ultimaSesion[0]?.inicio || gen.ultimoEncendidoSemanal || gen.createdAt || new Date();
+    const msPasados   = ahora - new Date(fechaUltimo);
     const msFaltan    = Math.max(0, INTERVALO_MS - msPasados);
     const diasFaltan  = Math.round(msFaltan / (24 * 60 * 60 * 1000));
 
-    console.log(`[ENCENDIDO] ${gen.genId} — diasFaltan: ${diasFaltan} | ultimaSesion: ${fechaUltimo ?? 'ninguna'}`);
+    console.log(`[ENCENDIDO] ${gen.genId} — diasFaltan: ${diasFaltan} | ultimaSesion: ${fechaUltimo}`);
 
-    if (diasFaltan > UMBRAL_ENCENDIDO_DIAS) return;
+    if (diasFaltan > AVISO_ENCENDIDO_DIAS) return;
 
     const { creado, pendiente } = await upsertPendiente(
         gen.idGenerador,
         'encendido',
         'alta',
-        { diasFaltan, ultimoEncendido: fechaUltimo }
+        { diasFaltan, ultimoEncendido: fechaUltimo },
+        'tecnico_mantenimiento'
     );
 
     if (creado) {
@@ -179,7 +235,9 @@ async function verificarEncendidoSemanal(gen) {
             genId:       gen.genId,
             tipo:        'encendido',
             titulo:      'Encendido semanal pendiente',
-            mensaje:     `${gen.genId}: no ha sido encendido en los últimos 7 días`,
+            mensaje:     diasFaltan <= 0
+                ? `${gen.genId}: no ha sido encendido en los últimos 7 días`
+                : `${gen.genId}: debe encenderse en los próximos ${diasFaltan} día(s)`,
             prioridad:   'alta',
         });
         await marcarNotificado(pendiente.idPendiente);
@@ -191,7 +249,7 @@ async function verificarGasolina(gen, horasSesion) {
     const capacidad       = parseFloat(gen.capacidadGasolina);
     const consumoHora     = parseFloat(gen.consumoGasolinaHoras);
 
-    // Si está corriendo, descontar el consumo de la sesión activa para tener litros reales
+    // Si está corriendo, descontar el consumo de la sesión activa
     const litrosReales = gen.encendidoEn
         ? Math.max(0, litrosGuardados - (horasSesion * consumoHora))
         : litrosGuardados;
@@ -208,7 +266,8 @@ async function verificarGasolina(gen, horasSesion) {
         gen.idGenerador,
         'gasolina',
         prioridad,
-        { porcentaje: Math.round(porcentaje * 100), litrosReales: parseFloat(litrosReales.toFixed(2)), capacidad }
+        { porcentaje: Math.round(porcentaje * 100), litrosReales: parseFloat(litrosReales.toFixed(2)), capacidad },
+        'tecnico_abastecimiento'
     );
 
     if (creado) {
@@ -240,7 +299,7 @@ async function verificarMantenimientosPreventivos() {
             gasolinaActualLitros:   schema.generadores.gasolinaActualLitros,
             ultimoCambioFiltros:    schema.generadores.ultimoCambioFiltros,
             ultimoEncendidoSemanal: schema.generadores.ultimoEncendidoSemanal,
-            intervalo:              schema.generadoresModelos.intervaloCambioAceite,
+            createdAt:              schema.generadores.createdAt,
             capacidadGasolina:      schema.generadoresModelos.capacidadGasolina,
             consumoGasolinaHoras:   schema.generadoresModelos.consumoGasolinaHoras,
         })
@@ -249,14 +308,29 @@ async function verificarMantenimientosPreventivos() {
         .where(eq(schema.generadores.eliminado, false));
 
         for (const gen of generadores) {
+            // ── Horas dinámicas ───────────────────────────────────────────────
+            // horasTotales está en segundos en la DB
             const horasGuardadas = parseFloat(gen.horasTotales || 0) / 3600;
             const horasSesion    = gen.encendidoEn
                 ? (ahora - new Date(gen.encendidoEn)) / 1000 / 3600
                 : 0;
-            const horasActuales = horasGuardadas + horasSesion;
+            const horasActuales  = horasGuardadas + horasSesion;
 
-            await verificarAceite(gen, horasActuales);
-            await verificarFiltros(gen);
+            // ── Si el generador no tiene ninguna hora, no verificar nada ─────
+            if (horasActuales === 0) {
+                console.log(`[SKIP] ${gen.genId} — sin horas de uso, omitiendo verificaciones`);
+                continue;
+            }
+
+            // ── Verificaciones por horas ──────────────────────────────────────
+            await verificarMantenimientoPorHoras(gen, horasActuales, 'aceite',             INTERVALO_ACEITE_HORAS,             'tecnico_abastecimiento');
+            await verificarMantenimientoPorHoras(gen, horasActuales, 'filtro_aire',        INTERVALO_FILTRO_AIRE_HORAS,        'tecnico_mantenimiento');
+            await verificarMantenimientoPorHoras(gen, horasActuales, 'filtro_combustible', INTERVALO_FILTRO_COMBUSTIBLE_HORAS, 'tecnico_mantenimiento');
+            await verificarMantenimientoPorHoras(gen, horasActuales, 'filtro_aceite',      INTERVALO_FILTRO_ACEITE_HORAS,      'tecnico_mantenimiento');
+            await verificarMantenimientoPorHoras(gen, horasActuales, 'bujias',             INTERVALO_BUJIAS_HORAS,             'tecnico_mantenimiento');
+
+            // ── Verificaciones por días / porcentaje ──────────────────────────
+            await verificarBateria(gen);
             await verificarEncendidoSemanal(gen);
             await verificarGasolina(gen, horasSesion);
         }

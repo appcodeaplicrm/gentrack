@@ -109,7 +109,7 @@ const CONFIG = {
         severidad:     'advertencia',
         guardarAlerta: true,
     },
-    [NOTIF.CORRIDA_EXCESIVA]: {
+    [NOTIF.LIMITE_CORRIENDO]: {
         titulo:        (d) => `${d.genId} — Operación prolongada`,
         cuerpo:        (d) => `El generador lleva ${d.horasCorriendo}h corriendo sin descanso. Debe apagarse para descansar.`,
         prioridad:     'high',

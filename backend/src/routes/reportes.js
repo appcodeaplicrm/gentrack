@@ -6,6 +6,29 @@ import { verificarToken } from '../middleware/auth.js';
 
 const router = Router();
 
+// Todos los tipos de mantenimiento soportados
+const TIPOS_MANTENIMIENTO = [
+    'gasolina',
+    'aceite',
+    'filtros',
+    'filtro_gasolina',
+    'filtro_combustible',
+    'bateria',
+    'bujias',
+    'encendido',
+];
+
+const TIPO_LABEL = {
+    gasolina:           'Combustible',
+    aceite:             'Aceite',
+    filtros:            'Filtro de Aire',
+    filtro_gasolina:    'Filtro de Gasolina',
+    filtro_combustible: 'Filtro de Combustible',
+    bateria:            'Batería',
+    bujias:             'Bujías',
+    encendido:          'Encendido Semanal',
+};
+
 const registrarEvento = async ({ idGenerador, idUsuario, tipoEvento, origen, metadata }) => {
     await db.insert(schema.eventos).values({
         idGenerador,
@@ -16,29 +39,28 @@ const registrarEvento = async ({ idGenerador, idUsuario, tipoEvento, origen, met
     });
 };
 
-// Helper para formatear segundos a "Xh Ym" en el timeline
 const segsATexto = (segs) => {
     const h = Math.floor(segs / 3600);
     const m = Math.floor((segs % 3600) / 60);
     return `${h}h ${m}m`;
 };
 
-// ── GET todos los reportes globales ─────────────────────────────────────────
+// ── GET todos los reportes globales ──────────────────────────────────────────
 router.get('/', verificarToken, async (req, res) => {
     try {
-        const { tipo } = req.query; // 'gasolina' | 'aceite' | 'mantenimiento'
+        const { tipo } = req.query;
 
         const rows = await db
             .select({
-                idReporte:    schema.reportes.idReporte,
-                tipo:         schema.reportes.tipo,
-                desde:        schema.reportes.desde,
-                hasta:        schema.reportes.hasta,
-                generadoEn:   schema.reportes.generadoEn,
-                idGenerador:  schema.reportes.idGenerador,
-                nombreNodo:   schema.nodos.nombre,
-                ubicacion:    schema.nodos.ubicacion,
-                genId:        schema.generadores.genId,
+                idReporte:     schema.reportes.idReporte,
+                tipo:          schema.reportes.tipo,
+                desde:         schema.reportes.desde,
+                hasta:         schema.reportes.hasta,
+                generadoEn:    schema.reportes.generadoEn,
+                idGenerador:   schema.reportes.idGenerador,
+                nombreNodo:    schema.nodos.nombre,
+                ubicacion:     schema.nodos.ubicacion,
+                genId:         schema.generadores.genId,
                 nombreUsuario: schema.usuarios.nombre,
             })
             .from(schema.reportes)
@@ -55,8 +77,7 @@ router.get('/', verificarToken, async (req, res) => {
     }
 });
 
-
-// ── GET todos los reportes de un generador ───────────────────────────────────
+// ── GET reportes de un generador ─────────────────────────────────────────────
 router.get('/:idGenerador', verificarToken, async (req, res) => {
     try {
         const { idGenerador } = req.params;
@@ -70,7 +91,7 @@ router.get('/:idGenerador', verificarToken, async (req, res) => {
     }
 });
 
-// ── POST generar reporte ─────────────────────────────────────────────────────
+// ── POST generar reporte ──────────────────────────────────────────────────────
 router.post('/generar', verificarToken, async (req, res) => {
     try {
         const { idGenerador, tipo, desde, hasta } = req.body;
@@ -119,6 +140,7 @@ router.post('/generar', verificarToken, async (req, res) => {
             ))
             .orderBy(asc(schema.sesionesOperacion.inicio));
 
+        // Todos los mantenimientos del período sin filtro de tipo
         const mantenimientos = await db.select().from(schema.mantenimientos)
             .where(and(
                 eq(schema.mantenimientos.idGenerador, idGenerador),
@@ -134,23 +156,26 @@ router.post('/generar', verificarToken, async (req, res) => {
             ));
 
         // ── 3. Estadísticas ──────────────────────────────────────────────────
-        // horasSesion está en SEGUNDOS en la DB → sumamos segundos directamente
-        const segundosTotalesPeriodo  = sesiones.reduce((acc, s) => acc + parseFloat(s.horasSesion || 0), 0);
-        const cambiosAceite           = mantenimientos.filter(m => m.tipo === 'aceite').length;
-        const recargasGasolina        = mantenimientos.filter(m => m.tipo === 'gasolina').length;
-        const litrosTotalesRecargados = mantenimientos
-            .filter(m => m.tipo === 'gasolina')
-            .reduce((acc, m) => acc + parseFloat(m.cantidadLitros || 0), 0);
-        const sesionesAutomaticas     = sesiones.filter(s => s.tipoInicio.toLowerCase() === 'automatico').length;
-        const sesionesManuales        = sesiones.filter(s => s.tipoInicio.toLowerCase() === 'manual').length;
+        const segundosTotalesPeriodo = sesiones.reduce((acc, s) => acc + parseFloat(s.horasSesion || 0), 0);
 
-        // duracionPromedio en segundos por sesión
-        const duracionPromedio = sesiones.length > 0
-            ? Math.round(segundosTotalesPeriodo / sesiones.length)
-            : 0;
+        // Conteo y litros por cada tipo de mantenimiento
+        const conteosPorTipo = {};
+        const litrosPorTipo  = {};
 
-        // sesionMasLarga en segundos
-        const sesionMasLarga = sesiones.reduce((max, s) => {
+        for (const t of TIPOS_MANTENIMIENTO) {
+            const delTipo = mantenimientos.filter(m => m.tipo === t);
+            conteosPorTipo[t] = delTipo.length;
+            // Solo para tipos con litros
+            if (t === 'gasolina') {
+                litrosPorTipo[t] = delTipo.reduce((acc, m) => acc + parseFloat(m.cantidadLitros || 0), 0);
+            }
+        }
+
+        const totalMantenimientos    = mantenimientos.length;
+        const sesionesAutomaticas    = sesiones.filter(s => s.tipoInicio.toLowerCase() === 'automatico').length;
+        const sesionesManuales       = sesiones.filter(s => s.tipoInicio.toLowerCase() === 'manual').length;
+        const duracionPromedio       = sesiones.length > 0 ? Math.round(segundosTotalesPeriodo / sesiones.length) : 0;
+        const sesionMasLarga         = sesiones.reduce((max, s) => {
             const segs = parseFloat(s.horasSesion || 0);
             return segs > max ? segs : max;
         }, 0);
@@ -160,36 +185,62 @@ router.post('/generar', verificarToken, async (req, res) => {
             return acc;
         }, {});
 
-        // ── 4. Gráficos agrupados por mes ────────────────────────────────────
+        // ── 4. Gráficos por mes ──────────────────────────────────────────────
         const sesionesPorMes = agruparPorMes(sesiones, 'inicio', (items) => ({
             total:      items.length,
-            // horas en segundos — el frontend convierte con segsAHorasMin
             horas:      Math.round(items.reduce((acc, s) => acc + parseFloat(s.horasSesion || 0), 0)),
             automatico: items.filter(s => s.tipoInicio.toLowerCase() === 'automatico').length,
             manual:     items.filter(s => s.tipoInicio.toLowerCase() === 'manual').length,
         }));
 
-        const gasolinaPorMes = agruparPorMes(
-            mantenimientos.filter(m => m.tipo === 'gasolina'),
-            'realizadoEn',
-            (items) => ({
-                recargas: items.length,
-                litros:   items.reduce((acc, m) => acc + parseFloat(m.cantidadLitros || 0), 0).toFixed(2),
-            }),
-        );
+        // Agrupa mantenimientos por mes para cada tipo
+        const mantenimientosPorMes = {};
+        for (const t of TIPOS_MANTENIMIENTO) {
+            const delTipo = mantenimientos.filter(m => m.tipo === t);
+            if (delTipo.length > 0) {
+                mantenimientosPorMes[t] = agruparPorMes(delTipo, 'realizadoEn', (items) => ({
+                    cantidad: items.length,
+                    ...(t === 'gasolina' && {
+                        litros: items.reduce((acc, m) => acc + parseFloat(m.cantidadLitros || 0), 0).toFixed(2),
+                    }),
+                }));
+            }
+        }
 
-        const aceitePorMes = agruparPorMes(
-            mantenimientos.filter(m => m.tipo === 'aceite'),
-            'realizadoEn',
-            (items) => ({ cambios: items.length }),
-        );
+        // Retrocompatibilidad: mantener gasolinaPorMes y aceitePorMes como antes
+        const gasolinaPorMes = mantenimientosPorMes['gasolina'] ?? [];
+        const aceitePorMes   = mantenimientosPorMes['aceite']   ?? [];
 
-        // ── 5. Horas acumuladas en el tiempo (línea) ─────────────────────────
-        // horasTotalesAcum está en SEGUNDOS en la DB
-        // Restamos los segundos del período para obtener la base antes del período
+        // ── 4b. Grupos de mantenimientos ─────────────────────────────────────
+        const grupoFiltros  = ['filtros', 'filtro_gasolina', 'filtro_combustible'];
+        const grupoMotor    = ['aceite', 'bujias'];
+        const grupoElectric = ['bateria', 'encendido'];
+
+        const buildGrupo = (tipos) => {
+            const mesesSet = new Set();
+            for (const t of tipos) {
+                (mantenimientosPorMes[t] ?? []).forEach(m => mesesSet.add(m.mes));
+            }
+            const meses = Array.from(mesesSet).sort();
+            if (meses.length === 0) return null;
+            return meses.map(mes => {
+                const entry = { mes };
+                for (const t of tipos) {
+                    const found = (mantenimientosPorMes[t] ?? []).find(m => m.mes === mes);
+                    entry[t] = found?.cantidad ?? 0;
+                }
+                entry.total = tipos.reduce((s, t) => s + (entry[t] ?? 0), 0);
+                return entry;
+            });
+        };
+
+        const grupoFiltrosData  = buildGrupo(grupoFiltros);
+        const grupoMotorData    = buildGrupo(grupoMotor);
+        const grupoElectricData = buildGrupo(grupoElectric);
+
+        // ── 5. Horas acumuladas ──────────────────────────────────────────────
         const segundosBaseAntesPeriodo = Math.max(
-            parseFloat(gen.horasTotalesAcum || 0) - segundosTotalesPeriodo,
-            0,
+            parseFloat(gen.horasTotalesAcum || 0) - segundosTotalesPeriodo, 0,
         );
         let acumulado = segundosBaseAntesPeriodo;
 
@@ -202,7 +253,7 @@ router.post('/generar', verificarToken, async (req, res) => {
                 return {
                     fecha:           new Date(s.fin).toLocaleDateString('es-EC', { day: '2-digit', month: 'short' }),
                     fechaISO:        new Date(s.fin).toISOString(),
-                    horasAcumuladas: parseFloat((acumulado / 3600).toFixed(2)), // en horas reales para el gráfico
+                    horasAcumuladas: parseFloat((acumulado / 3600).toFixed(2)),
                     segundosAcum:    Math.round(acumulado),
                     label:           `${h}h ${m}m`,
                 };
@@ -222,10 +273,8 @@ router.post('/generar', verificarToken, async (req, res) => {
         }
 
         // ── 6. Proyección próximo mantenimiento ──────────────────────────────
-        // intervaloCambioAceite está en HORAS en la DB
-        // horasTotalesAcum está en SEGUNDOS → convertimos para comparar
         const intervaloCambioAceiteHoras = parseInt(gen.intervaloCambioAceite || 0);
-        const horasActuales              = parseFloat(gen.horasTotalesAcum || 0) / 3600; // segundos → horas
+        const horasActuales              = parseFloat(gen.horasTotalesAcum || 0) / 3600;
         let proximoMantenimiento         = null;
 
         if (intervaloCambioAceiteHoras > 0 && horasActuales > 0) {
@@ -234,10 +283,7 @@ router.post('/generar', verificarToken, async (req, res) => {
             const horasRestantes     = horasProximoCambio - horasActuales;
 
             const diasPeriodo   = Math.max((hastaDate - desdeDate) / (1000 * 60 * 60 * 24), 1);
-            // consumoDiario en horas/día
-            const consumoDiario = sesiones.length > 0
-                ? (segundosTotalesPeriodo / 3600) / diasPeriodo
-                : 0;
+            const consumoDiario = sesiones.length > 0 ? (segundosTotalesPeriodo / 3600) / diasPeriodo : 0;
             const diasRestantes = consumoDiario > 0 ? Math.ceil(horasRestantes / consumoDiario) : null;
 
             proximoMantenimiento = {
@@ -257,15 +303,15 @@ router.post('/generar', verificarToken, async (req, res) => {
             ...sesiones.filter(s => s.fin).map(s => ({
                 tipo:        'apagado',
                 timestamp:   s.fin,
-                // horasSesion en segundos → mostramos formateado
                 descripcion: `Generador apagado — ${segsATexto(parseFloat(s.horasSesion || 0))} de sesión`,
             })),
             ...mantenimientos.map(m => ({
                 tipo:        'mantenimiento',
                 timestamp:   m.realizadoEn,
-                descripcion: m.tipo === 'aceite'
-                    ? 'Cambio de aceite'
-                    : `Recarga de gasolina — ${parseFloat(m.cantidadLitros || 0).toFixed(1)}L`,
+                descripcion: m.tipo === 'gasolina'
+                    ? `Recarga de gasolina — ${parseFloat(m.cantidadLitros || 0).toFixed(1)}L`
+                    : TIPO_LABEL[m.tipo] ?? m.tipo,
+                subtipo:     m.tipo,
             })),
             ...alertas.map(a => ({
                 tipo:        'alerta',
@@ -275,7 +321,7 @@ router.post('/generar', verificarToken, async (req, res) => {
             })),
         ].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
 
-        // ── 8. Objeto datos completo ─────────────────────────────────────────
+        // ── 8. Objeto de datos completo ──────────────────────────────────────
         const datos = {
             generador: {
                 idGenerador:          gen.idGenerador,
@@ -284,7 +330,6 @@ router.post('/generar', verificarToken, async (req, res) => {
                 ubicacion:            gen.ubicacion,
                 descripcion:          gen.descripcionNodo,
                 estado:               gen.estado,
-                // Mandamos en segundos — el frontend convierte con segsAHorasMin
                 horasTotalesAcum:     Math.round(parseFloat(gen.horasTotalesAcum || 0)),
                 gasolinaActualLitros: parseFloat(parseFloat(gen.gasolinaActualLitros || 0).toFixed(2)),
                 creadoEn:             gen.creadoEn,
@@ -300,21 +345,29 @@ router.post('/generar', verificarToken, async (req, res) => {
             timeline,
             estadisticas: {
                 totalSesiones:           sesiones.length,
-                horasTotalesPeriodo:     Math.round(segundosTotalesPeriodo), // segundos
-                duracionPromedio:        duracionPromedio,                   // segundos
-                sesionMasLarga:          Math.round(sesionMasLarga),         // segundos
+                horasTotalesPeriodo:     Math.round(segundosTotalesPeriodo),
+                duracionPromedio,
+                sesionMasLarga:          Math.round(sesionMasLarga),
                 sesionesAutomaticas,
                 sesionesManuales,
-                cambiosAceite,
-                recargasGasolina,
-                litrosTotalesRecargados: litrosTotalesRecargados.toFixed(2),
-                totalAlertas:            alertas.length,
+                totalMantenimientos,
+                // Conteos individuales por tipo
+                conteosPorTipo,           // { gasolina: 3, aceite: 1, bateria: 0, ... }
+                litrosTotalesRecargados:  (litrosPorTipo['gasolina'] ?? 0).toFixed(2),
+                // Retrocompat
+                cambiosAceite:    conteosPorTipo['aceite']   ?? 0,
+                recargasGasolina: conteosPorTipo['gasolina'] ?? 0,
+                totalAlertas:     alertas.length,
                 alertasPorTipo,
             },
             graficos: {
                 sesionesPorMes,
-                gasolinaPorMes,
-                aceitePorMes,
+                gasolinaPorMes,      // retrocompat
+                aceitePorMes,        // retrocompat
+                mantenimientosPorMes, // nuevo: todos los tipos por mes
+                grupoFiltros:  grupoFiltrosData,   
+                grupoMotor:    grupoMotorData,     
+                grupoElectric: grupoElectricData,  
                 horasAcumuladas,
                 proximoMantenimiento,
             },
@@ -344,26 +397,28 @@ router.post('/generar', verificarToken, async (req, res) => {
     }
 });
 
-// ── DELETE reporte ───────────────────────────────────────────────────────────
+// ── DELETE reporte ────────────────────────────────────────────────────────────
 router.delete('/:id', verificarToken, async (req, res) => {
     try {
         const { id } = req.params;
 
+        const [existente] = await db.select().from(schema.reportes)
+            .where(eq(schema.reportes.idReporte, id))
+            .limit(1);
+
+        if (!existente) {
+            return res.status(404).json({ success: false, error: 'Reporte no encontrado' });
+        }
+
         await registrarEvento({
-            idGenerador: data[0].idGenerador,
+            idGenerador: existente.idGenerador,
             idUsuario:   req.usuario.idUsuario,
             tipoEvento:  'reporte_eliminado',
             origen:      'usuario',
-            metadata:    { tipo: data[0].tipo, desde: data[0].desde, hasta: data[0].hasta },
+            metadata:    { tipo: existente.tipo, desde: existente.desde, hasta: existente.hasta },
         });
 
-        const data = await db.delete(schema.reportes)
-            .where(eq(schema.reportes.idReporte, id))
-            .returning();
-
-        if (data.length === 0) {
-            return res.status(404).json({ success: false, error: 'Reporte no encontrado' });
-        }
+        await db.delete(schema.reportes).where(eq(schema.reportes.idReporte, id));
 
         res.status(200).json({ success: true });
     } catch (error) {
@@ -372,7 +427,7 @@ router.delete('/:id', verificarToken, async (req, res) => {
     }
 });
 
-// ── Helper: agrupar array por mes ────────────────────────────────────────────
+// ── Helper ────────────────────────────────────────────────────────────────────
 function agruparPorMes(items, campoFecha, calcular) {
     const meses = {};
     for (const item of items) {

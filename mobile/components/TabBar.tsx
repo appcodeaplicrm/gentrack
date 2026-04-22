@@ -4,13 +4,6 @@ import { Ionicons } from '@expo/vector-icons';
 import { COLORS } from '@/assets/styles/colors';
 import { useData } from '@/provider/DataProvider';
 
-const TABS = [
-    { name: 'dashboard',   icon: 'grid-outline',      route: '/(tabs)/dashboard'    },
-    { name: 'generadores', icon: 'menu-outline',      route: '/(tabs)/generadores'  },
-    { name: 'activos',     icon: 'flash-outline',     route: '/(tabs)/activos'      },
-    { name: 'mantenimientos', icon: 'construct-outline', route: '/(tabs)/mantenimientos' },
-    { name: 'settings',    icon: 'settings-outline',  route: '/(tabs)/settings'     },
-];
 
 const TabIcon = ({ name, focused, badge }: { name: any; focused: boolean; badge?: number }) => (
     <View style={s.iconWrapper}>
@@ -36,6 +29,14 @@ export function TabBar() {
     const { noLeidas, mantenimientos } = useData(); 
 
     const criticos = mantenimientos?.filter(m => m.prioridad === 'alta').length || 0;
+
+    const TABS = [
+        { name: 'dashboard',      icon: 'grid-outline',      route: '/(tabs)/dashboard'      },
+        { name: 'generadores',    icon: 'menu-outline',      route: '/(tabs)/generadores'    },
+        { name: 'activos',        icon: 'flash-outline',     route: '/(tabs)/activos'        },
+        { name: 'mantenimientos', icon: 'construct-outline', route: '/(tabs)/mantenimientos' },
+        { name: 'settings',       icon: 'settings-outline',  route: '/(tabs)/settings'       },
+    ];
 
     return (
         <View style={s.tabBar}>

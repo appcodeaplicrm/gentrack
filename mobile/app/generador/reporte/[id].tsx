@@ -14,15 +14,53 @@ import * as Sharing from 'expo-sharing';
 import { useAuth } from '@/provider/AuthProvider';
 import { COLORS } from '@/assets/styles/colors';
 
-const API_URL   = process.env.EXPO_PUBLIC_API_URL;;
+const API_URL   = process.env.EXPO_PUBLIC_API_URL;
 const { width } = Dimensions.get('window');
 const CHART_W   = width - 40;
 
-/* ── Helpers ──────────────────────────────────────────────────── */
+// ── Config de tipos de mantenimiento ─────────────────────────────────────────
+const TIPO_MANT_CONFIG: Record<string, { label: string; icon: string; color: string }> = {
+    gasolina:           { label: 'Combustible',        icon: 'flame-outline',            color: '#ff9f43' },
+    aceite:             { label: 'Aceite',              icon: 'water-outline',            color: '#00e5a0' },
+    filtros:            { label: 'Filtro de Aire',      icon: 'options-outline',          color: '#34C98A' },
+    filtro_gasolina:    { label: 'Filtro Gasolina',     icon: 'filter-outline',           color: '#FF6B6B' },
+    filtro_combustible: { label: 'Filtro Combustible',  icon: 'filter-outline',           color: '#FF9999' },
+    bateria:            { label: 'Batería',             icon: 'battery-charging-outline', color: '#FFD700' },
+    bujias:             { label: 'Bujías',              icon: 'flash-outline',            color: '#C084FC' },
+    encendido:          { label: 'Enc. Semanal',        icon: 'power-outline',            color: '#818cf8' },
+};
+
+const TIPOS_ORDEN = ['gasolina', 'aceite', 'filtros', 'filtro_gasolina', 'filtro_combustible', 'bateria', 'bujias', 'encendido'];
+
+// ── Grupos de mantenimientos ──────────────────────────────────────────────────
+const GRUPOS_CONFIG = {
+    grupoFiltros: {
+        titulo:    'Filtros',
+        subtitulo: 'Filtro aire, gasolina y combustible por mes',
+        icon:      'options-outline',
+        color:     '#34C98A',
+        tipos:     ['filtros', 'filtro_gasolina', 'filtro_combustible'],
+    },
+    grupoMotor: {
+        titulo:    'Motor',
+        subtitulo: 'Aceite y bujías por mes',
+        icon:      'construct-outline',
+        color:     '#00e5a0',
+        tipos:     ['aceite', 'bujias'],
+    },
+    grupoElectric: {
+        titulo:    'Batería & Encendido',
+        subtitulo: 'Limpieza batería y arranques semanales por mes',
+        icon:      'battery-charging-outline',
+        color:     '#FFD700',
+        tipos:     ['bateria', 'encendido'],
+    },
+};
+
+/* ── Helpers ─────────────────────────────────────────────────────────────────*/
 const formatFecha = (d: Date) =>
     d.toLocaleDateString('es-EC', { day: '2-digit', month: 'short', year: 'numeric' });
 
-// Convierte segundos → "Xh Ym"
 const segsAHorasMin = (segs: number | undefined | null): string => {
     const total = Math.floor(segs ?? 0);
     const h     = Math.floor(total / 3600);
@@ -30,7 +68,6 @@ const segsAHorasMin = (segs: number | undefined | null): string => {
     return `${h}h ${m}m`;
 };
 
-// Convierte segundos → horas decimales para gráficos (eje Y legible)
 const segsAHorasDec = (segs: number): number =>
     parseFloat((segs / 3600).toFixed(2));
 
@@ -38,11 +75,11 @@ const slugify = (str: string) =>
     str.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
         .replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_]/g, '').toLowerCase();
 
-/* ── Chart config ─────────────────────────────────────────────── */
+/* ── Chart config ────────────────────────────────────────────────────────────*/
 const chartConfigBase = {
     backgroundGradientFrom:  'rgba(8,15,40,0)',
     backgroundGradientTo:    'rgba(8,15,40,0)',
-    decimalPlaces:           1,
+    decimalPlaces:           0,
     color:                   (opacity = 1) => `rgba(0,229,160,${opacity})`,
     labelColor:              (opacity = 1) => `rgba(180,210,255,${opacity})`,
     style:                   { borderRadius: 12 },
@@ -65,9 +102,11 @@ const STAT_PALETTE = [
     { bg: 'rgba(255,159,67,0.12)',  border: 'rgba(255,159,67,0.35)',  val: '#ff9f43' },
     { bg: 'rgba(255,71,87,0.12)',   border: 'rgba(255,71,87,0.35)',   val: '#ff6b81' },
     { bg: 'rgba(52,211,199,0.12)',  border: 'rgba(52,211,199,0.35)',  val: '#34d3c7' },
+    { bg: 'rgba(255,215,0,0.12)',   border: 'rgba(255,215,0,0.35)',   val: '#FFD700' },
+    { bg: 'rgba(192,132,252,0.12)', border: 'rgba(192,132,252,0.35)', val: '#C084FC' },
 ];
 
-/* ── PDF helpers ──────────────────────────────────────────────── */
+/* ── PDF helpers ─────────────────────────────────────────────────────────────*/
 const htmlBars = (
     items: { label: string; value: number; suffix?: string }[],
     color: string,
@@ -88,14 +127,37 @@ const htmlBars = (
     }).join('');
 };
 
-const htmlTimeline = (tl: any[]) =>
-    tl.slice(0, 40).map(item => {
-        const colorMap: Record<string, string> = {
-            encendido:     '#00e5a0',
-            apagado:       '#ff4757',
-            mantenimiento: '#c8e06a',
-            alerta:        '#ff9f43',
-        };
+const htmlGrupoCard = (titulo: string, data: any[], tipos: string[], color: string) => {
+    if (!data || data.length === 0) return '';
+    // Una mini-tabla por mes con subtotales por tipo
+    const headers = tipos.map(t => TIPO_MANT_CONFIG[t]?.label ?? t).join('</th><th style="padding:6px 8px;font-size:10px;color:#94a3b8">');
+    const rows = data.map(row => {
+        const celdas = tipos.map(t => `<td style="padding:6px 8px;text-align:center;font-size:12px;color:${TIPO_MANT_CONFIG[t]?.color ?? '#e2e8f0'};font-weight:700">${row[t] ?? 0}</td>`).join('');
+        return `<tr><td style="padding:6px 8px;font-size:11px;color:#94a3b8">${row.mes}</td>${celdas}<td style="padding:6px 8px;text-align:center;font-size:12px;color:${color};font-weight:800">${row.total}</td></tr>`;
+    }).join('');
+    return `
+    <div class="chart-card">
+        <h3>${titulo}</h3>
+        <p>Desglose por subtipo y mes</p>
+        <table style="width:100%;border-collapse:collapse;margin-top:8px">
+            <thead><tr>
+                <th style="padding:6px 8px;font-size:10px;color:#64748b;text-align:left">Mes</th>
+                <th style="padding:6px 8px;font-size:10px;color:#94a3b8">${headers}</th>
+                <th style="padding:6px 8px;font-size:10px;color:${color}">Total</th>
+            </tr></thead>
+            <tbody>${rows}</tbody>
+        </table>
+    </div>`;
+};
+
+const htmlTimeline = (tl: any[]) => {
+    const colorMap: Record<string, string> = {
+        encendido:     '#00e5a0',
+        apagado:       '#ff4757',
+        mantenimiento: '#c8e06a',
+        alerta:        '#ff9f43',
+    };
+    return tl.slice(0, 15).map(item => {
         const color = colorMap[item.tipo] ?? '#94a3b8';
         const ts = new Date(item.timestamp).toLocaleDateString('es-EC', {
             day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit',
@@ -109,8 +171,77 @@ const htmlTimeline = (tl: any[]) =>
           <td style="padding:7px 10px;color:#94a3b8;font-size:11px;white-space:nowrap">${ts}</td>
         </tr>`;
     }).join('');
+};
 
-/* ── Componente ───────────────────────────────────────────────── */
+const htmlStatRow = (label: string, value: string | number, color: string) => `
+    <tr>
+        <td style="padding:10px 14px;color:#94a3b8;font-size:12px;border-bottom:1px solid rgba(255,255,255,0.05)">${label}</td>
+        <td style="padding:10px 14px;font-size:13px;font-weight:700;color:${color};border-bottom:1px solid rgba(255,255,255,0.05)">${value}</td>
+    </tr>`;
+
+/* ── Componente GrupoBarChart ─────────────────────────────────────────────────
+   Renderiza barras apiladas visualmente usando Views (react-native-chart-kit
+   no soporta grouped/stacked natively con transparencia, así que lo hacemos
+   manual con una mini vista de barras proporcionales).
+*/
+const GrupoBarChart = ({ data, tipos, color, width: w }: {
+    data: any[]; tipos: string[]; color: string; width: number;
+}) => {
+    if (!data || data.length === 0) return null;
+    const maxTotal = Math.max(...data.map(d => d.total), 1);
+    const BAR_W    = Math.min(Math.max(Math.floor((w - 60) / Math.max(data.length, 3)) - 6, 20), 48);
+
+    return (
+        <View style={{ paddingHorizontal: 8, paddingTop: 8 }}>
+            {/* Leyenda */}
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 12 }}>
+                {tipos.map(t => (
+                    <View key={t} style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                        <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: TIPO_MANT_CONFIG[t]?.color ?? '#fff' }} />
+                        <Text style={{ fontSize: 10, color: COLORS.textMuted }}>{TIPO_MANT_CONFIG[t]?.label ?? t}</Text>
+                    </View>
+                ))}
+            </View>
+            {/* Barras */}
+            <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 6, height: 130 }}>
+                {data.map((row, i) => {
+                    const totalH = Math.round((row.total / maxTotal) * 110);
+                    return (
+                        <View key={i} style={{ alignItems: 'center', flex: 1 }}>
+                            <Text style={{ fontSize: 9, color: color, fontWeight: '700', marginBottom: 3 }}>
+                                {row.total > 0 ? row.total : ''}
+                            </Text>
+                            {/* Barra apilada */}
+                            <View style={{ width: BAR_W, height: totalH || 2, borderRadius: 4, overflow: 'hidden', justifyContent: 'flex-end' }}>
+                                {tipos.map((t, ti) => {
+                                    const val = row[t] ?? 0;
+                                    if (val === 0) return null;
+                                    const segH = Math.round((val / maxTotal) * 110);
+                                    return (
+                                        <View key={t} style={{
+                                            width: '100%',
+                                            height: segH,
+                                            backgroundColor: TIPO_MANT_CONFIG[t]?.color ?? '#888',
+                                            opacity: 0.85,
+                                        }} />
+                                    );
+                                })}
+                                {row.total === 0 && (
+                                    <View style={{ width: '100%', height: 2, backgroundColor: 'rgba(255,255,255,0.1)' }} />
+                                )}
+                            </View>
+                            <Text style={{ fontSize: 9, color: COLORS.textMuted, marginTop: 4 }} numberOfLines={1}>
+                                {row.mes.slice(0, 3)}
+                            </Text>
+                        </View>
+                    );
+                })}
+            </View>
+        </View>
+    );
+};
+
+/* ── Componente principal ─────────────────────────────────────────────────── */
 export default function ReporteGenerador() {
     const { id, genId: genIdParam } = useLocalSearchParams<{ id: string; genId: string }>();
     const [genId, setGenId] = useState<string | null>(genIdParam ?? null);
@@ -138,8 +269,8 @@ export default function ReporteGenerador() {
         slideAnims.forEach(a => a.setValue(30));
         Animated.stagger(80, fadeAnims.map((fade, i) =>
             Animated.parallel([
-                Animated.timing(fade,          { toValue: 1, duration: 400, delay: i * 100, useNativeDriver: true }),
-                Animated.timing(slideAnims[i], { toValue: 0, duration: 400, delay: i * 100, useNativeDriver: true }),
+                Animated.timing(fade,          { toValue: 1, duration: 400, useNativeDriver: true }),
+                Animated.timing(slideAnims[i], { toValue: 0, duration: 400, useNativeDriver: true }),
             ])
         )).start();
     };
@@ -170,7 +301,7 @@ export default function ReporteGenerador() {
         }
     };
 
-    /* ── Exportar PDF ───────────────────────────────────────────── */
+    /* ── Exportar PDF ──────────────────────────────────────────────────────── */
     const exportarPDF = async () => {
         if (!reporte) return;
         setExporting(true);
@@ -184,52 +315,46 @@ export default function ReporteGenerador() {
             const ahora        = new Date();
             const fechaEmision = ahora.toLocaleDateString('es-EC', { day: '2-digit', month: 'long', year: 'numeric' });
             const horaEmision  = ahora.toLocaleTimeString('es-EC', { hour: '2-digit', minute: '2-digit' });
+            const hTotal       = segsAHorasMin(stats?.horasTotalesPeriodo ?? 0);
+            const hAcumTexto   = segsAHorasMin(gen?.horasTotalesAcum ?? 0);
 
-            // horasTotalesPeriodo viene en segundos
-            const hTotal      = segsAHorasMin(stats?.horasTotalesPeriodo ?? 0);
-            // horasTotalesAcum viene en segundos
-            const hAcumTexto  = segsAHorasMin(gen?.horasTotalesAcum ?? 0);
+            const nombreArchivo = `${slugify(gen?.genId ?? `gen_${id}`)}_${slugify(gen?.ubicacion ?? 'sin_ubicacion')}_${ahora.toISOString().slice(0, 10).replace(/-/g, '')}`;
 
-            const nombreSlug    = slugify(gen?.genId ?? `gen_${id}`);
-            const ubicacionSlug = slugify(gen?.ubicacion ?? 'sin_ubicacion');
-            const fechaSlug     = ahora.toISOString().slice(0, 10).replace(/-/g, '');
-            const nombreArchivo = `${nombreSlug}_${ubicacionSlug}_${fechaSlug}`;
-
-            /* Barras sesiones — valor = conteo, sin conversión */
             const barSesiones = htmlBars(
-                (graf.sesionesPorMes ?? []).map((m: any) => ({
-                    label: m.mes, value: Number(m.total) || 0,
-                })),
-                'linear-gradient(90deg,#00e5a0,#00b87a)',
+                (graf.sesionesPorMes ?? []).map((m: any) => ({ label: m.mes, value: Number(m.total) || 0 })),
+                '#00e5a0',
             );
-
-            /* Barras horas — m.horas viene en segundos → convertir a horas decimales */
             const barHoras = htmlBars(
                 (graf.sesionesPorMes ?? []).map((m: any) => ({
-                    label:  m.mes,
-                    value:  parseFloat((parseFloat(m.horas ?? 0) / 3600).toFixed(1)),
-                    suffix: 'h',
+                    label: m.mes, value: parseFloat((parseFloat(m.horas ?? 0) / 3600).toFixed(1)), suffix: 'h',
                 })),
-                'linear-gradient(90deg,#818cf8,#6366f1)',
+                '#818cf8',
             );
 
-            /* Barras gasolina — litros ya vienen en litros */
-            const barGas = htmlBars(
-                (graf.gasolinaPorMes ?? []).map((m: any) => ({
-                    label: m.mes, value: parseFloat(m.litros ?? 0), suffix: 'L',
-                })),
-                'linear-gradient(90deg,#ff9f43,#e67e22)',
-            );
+            // Gráficas individuales (gasolina)
+            const barsPorTipoIndiv = ['gasolina'].map(tipo => {
+                const data = graf.mantenimientosPorMes?.[tipo];
+                if (!data || data.length === 0) return '';
+                const cfg = TIPO_MANT_CONFIG[tipo];
+                const items = data.map((m: any) => ({
+                    label: m.mes,
+                    value: parseFloat(m.litros ?? 0),
+                    suffix: 'L',
+                }));
+                return `
+                <div class="chart-card">
+                    <h3>${cfg.label}</h3>
+                    <p>Litros recargados por mes</p>
+                    ${htmlBars(items, cfg.color)}
+                </div>`;
+            }).join('');
 
-            /* Barras aceite */
-            const barAceite = htmlBars(
-                (graf.aceitePorMes ?? []).map((m: any) => ({
-                    label: m.mes, value: m.cambios,
-                })),
-                'linear-gradient(90deg,#c8e06a,#a3c43a)',
-            );
+            // Grupos
+            const grupoFiltrosPDF  = htmlGrupoCard('Filtros', graf.grupoFiltros  ?? [], ['filtros', 'filtro_gasolina', 'filtro_combustible'], '#34C98A');
+            const grupoMotorPDF    = htmlGrupoCard('Motor (Aceite & Bujías)', graf.grupoMotor ?? [], ['aceite', 'bujias'], '#00e5a0');
+            const grupoElectricPDF = htmlGrupoCard('Batería & Encendido', graf.grupoElectric ?? [], ['bateria', 'encendido'], '#FFD700');
 
-            /* SVG línea horas acumuladas — horasAcumuladas ya viene en horas decimales del backend */
+            // SVG línea acumulada
             const acum: any[] = graf.horasAcumuladas ?? [];
             let svgLinea = '';
             if (acum.length >= 2) {
@@ -243,19 +368,7 @@ export default function ReporteGenerador() {
                     const y = H - PAD - (p.horasAcumuladas - minH) * yScale;
                     return `${x.toFixed(1)},${y.toFixed(1)}`;
                 }).join(' ');
-                const firstPt     = pts.split(' ')[0];
-                const lastPt      = pts.split(' ').slice(-1)[0];
-                const [lx, ly]    = lastPt.split(',');
-                const labelsSvg   = acum
-                    .filter((_: any, i: number) =>
-                        i === 0 || i === acum.length - 1 || i % Math.ceil(acum.length / 4) === 0)
-                    .map((p: any) => {
-                        const idx = acum.indexOf(p);
-                        const x   = PAD + idx * xStep;
-                        // Usar el label formateado si existe, sino calcular
-                        const lbl = p.label ?? segsAHorasMin(p.segundosAcum ?? 0);
-                        return `<text x="${x.toFixed(1)}" y="${H - 4}" font-size="9" fill="#64748b" text-anchor="middle">${p.fecha}</text>`;
-                    }).join('');
+                const [lx, ly] = pts.split(' ').slice(-1)[0].split(',');
                 svgLinea = `
                 <svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto">
                   <defs>
@@ -264,57 +377,69 @@ export default function ReporteGenerador() {
                       <stop offset="100%" stop-color="#34d3c7" stop-opacity="0"/>
                     </linearGradient>
                   </defs>
-                  <polygon points="${firstPt} ${pts} ${lx},${H - PAD} ${PAD},${H - PAD}" fill="url(#lg)"/>
+                  <polygon points="${pts.split(' ')[0]} ${pts} ${lx},${H - PAD} ${PAD},${H - PAD}" fill="url(#lg)"/>
                   <polyline points="${pts}" fill="none" stroke="#34d3c7" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
                   <circle cx="${lx}" cy="${ly}" r="4" fill="#34d3c7"/>
-                  ${labelsSvg}
                 </svg>`;
             }
 
             const prox     = graf.proximoMantenimiento;
             const proxHTML = prox ? `
             <div style="background:rgba(255,159,67,0.1);border:1px solid rgba(255,159,67,0.3);border-radius:10px;padding:14px;margin-top:12px">
-              <p style="font-size:12px;color:#ff9f43;font-weight:700;margin-bottom:6px">Proyeccion proximo cambio de aceite</p>
+              <p style="font-size:12px;color:#ff9f43;font-weight:700;margin-bottom:6px">Proyección próximo cambio de aceite</p>
               <div style="display:flex;gap:24px">
                 <div><span style="font-size:20px;font-weight:800;color:#ff9f43">${prox.horasProximoCambio}h</span><br><span style="font-size:10px;color:#64748b">Meta acumulada</span></div>
                 <div><span style="font-size:20px;font-weight:800;color:#fbbf24">${prox.horasRestantes}h</span><br><span style="font-size:10px;color:#64748b">Horas restantes</span></div>
-                ${prox.diasRestantes ? `<div><span style="font-size:20px;font-weight:800;color:#fb923c">~${prox.diasRestantes} dias</span><br><span style="font-size:10px;color:#64748b">Dias estimados</span></div>` : ''}
+                ${prox.diasRestantes ? `<div><span style="font-size:20px;font-weight:800;color:#fb923c">~${prox.diasRestantes} días</span><br><span style="font-size:10px;color:#64748b">Días estimados</span></div>` : ''}
               </div>
             </div>` : '';
+
+            const tablaMants = TIPOS_ORDEN
+                .filter(t => (stats?.conteosPorTipo?.[t] ?? 0) > 0)
+                .map(t => {
+                    const cfg   = TIPO_MANT_CONFIG[t];
+                    const count = stats?.conteosPorTipo?.[t] ?? 0;
+                    const extra = t === 'gasolina'
+                        ? ` <span style="color:#64748b;font-size:11px">(${stats?.litrosTotalesRecargados ?? 0}L)</span>`
+                        : '';
+                    return htmlStatRow(cfg.label, `${count} registro${count !== 1 ? 's' : ''}${extra}`, cfg.color);
+                }).join('');
 
             const html = `
 <!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"/>
 <style>
   * { box-sizing:border-box; margin:0; padding:0 }
-  body { font-family: Arial, sans-serif; background:#080f28; color:#e2e8f0; padding:36px; }
+  body { font-family: Arial, sans-serif; background:#080f28; color:#e2e8f0; padding:36px }
   .page-header { display:flex; justify-content:space-between; align-items:flex-start; border-bottom:2px solid rgba(0,229,160,0.4); padding-bottom:20px; margin-bottom:28px }
-  .hd-left h1 { font-size:22px; font-weight:800; color:#e2e8f0; letter-spacing:-0.3px; margin-bottom:2px }
-  .hd-left p  { font-size:12px; color:#64748b }
-  .hd-badge   { display:inline-block; background:rgba(0,229,160,0.15); border:1px solid rgba(0,229,160,0.4); color:#00e5a0; border-radius:5px; padding:2px 10px; font-size:10px; font-weight:700; margin-bottom:6px }
-  .hd-right   { text-align:right; font-size:11px; color:#64748b; line-height:2 }
-  .hd-right b { color:#94a3b8 }
-  .gen-card   { background:rgba(255,255,255,0.03); border:1px solid rgba(21,96,218,0.35); border-radius:12px; padding:18px; margin-bottom:22px }
+  .hd-left h1  { font-size:22px; font-weight:800; color:#e2e8f0; margin-bottom:2px }
+  .hd-left p   { font-size:12px; color:#64748b }
+  .hd-badge    { display:inline-block; background:rgba(0,229,160,0.15); border:1px solid rgba(0,229,160,0.4); color:#00e5a0; border-radius:5px; padding:2px 10px; font-size:10px; font-weight:700; margin-bottom:6px }
+  .hd-right    { text-align:right; font-size:11px; color:#64748b; line-height:2 }
+  .hd-right b  { color:#94a3b8 }
+  .gen-card    { background:rgba(255,255,255,0.03); border:1px solid rgba(21,96,218,0.35); border-radius:12px; padding:18px; margin-bottom:22px }
   .gen-card h2 { font-size:14px; font-weight:700; color:#e2e8f0; margin-bottom:12px }
-  .gen-grid   { display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px }
-  .gen-item   { background:rgba(255,255,255,0.04); border-radius:8px; padding:10px 12px }
+  .gen-grid    { display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px }
+  .gen-item    { background:rgba(255,255,255,0.04); border-radius:8px; padding:10px 12px }
   .gen-item .lbl { font-size:10px; color:#64748b; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:3px }
   .gen-item .val { font-size:13px; font-weight:700; color:#e2e8f0 }
-  .sec        { margin-bottom:22px }
-  .sec-title  { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:1.5px; color:#64748b; margin-bottom:12px; display:flex; align-items:center; gap:8px }
+  .sec         { margin-bottom:22px }
+  .sec-title   { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:1.5px; color:#64748b; margin-bottom:12px; display:flex; align-items:center; gap:8px }
   .sec-title::after { content:''; flex:1; height:1px; background:rgba(255,255,255,0.07) }
-  .stats-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:10px }
-  .stat-card  { border-radius:10px; padding:14px; border:1px solid }
+  .stats-grid  { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin-bottom:14px }
+  .stat-card   { border-radius:10px; padding:14px; border:1px solid }
   .stat-card .val { font-size:22px; font-weight:800; margin-bottom:3px }
   .stat-card .lbl { font-size:10px; color:#64748b; text-transform:uppercase; letter-spacing:0.5px }
-  .chart-card { background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.07); border-radius:10px; padding:16px; margin-bottom:14px }
+  .chart-card  { background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.07); border-radius:10px; padding:16px; margin-bottom:14px }
   .chart-card h3 { font-size:12px; font-weight:700; color:#e2e8f0; margin-bottom:3px }
   .chart-card p  { font-size:10px; color:#64748b; margin-bottom:12px }
-  table { width:100%; border-collapse:collapse }
-  thead tr { border-bottom:1px solid rgba(255,255,255,0.08) }
-  thead th { padding:8px 10px; text-align:left; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:1px; color:#64748b }
+  table        { width:100%; border-collapse:collapse }
+  thead tr     { border-bottom:1px solid rgba(255,255,255,0.08) }
+  thead th     { padding:8px 10px; text-align:left; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:1px; color:#64748b }
   tbody tr:nth-child(odd) { background:rgba(255,255,255,0.02) }
-  .footer { margin-top:40px; padding-top:14px; border-top:1px solid rgba(255,255,255,0.06); display:flex; justify-content:space-between; font-size:10px; color:#374151 }
-  .two-col { display:grid; grid-template-columns:1fr 1fr; gap:14px }
+  .footer      { margin-top:40px; padding-top:14px; border-top:1px solid rgba(255,255,255,0.06); display:flex; justify-content:space-between; font-size:10px; color:#374151 }
+  .two-col     { display:grid; grid-template-columns:1fr 1fr; gap:14px }
+  .chips-row   { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px }
+  .chip        { border-radius:20px; padding:6px 12px; font-size:11px; font-weight:700; border:1px solid }
 </style>
 </head><body>
 
@@ -322,57 +447,74 @@ export default function ReporteGenerador() {
   <div class="hd-left">
     <div class="hd-badge">REPORTE OFICIAL</div>
     <h1>Reporte de Generador</h1>
-    <p>Sistema de Monitoreo Industrial &middot; ${gen?.genId ?? `GEN-${id}`}</p>
+    <p>Sistema de Monitoreo Industrial · ${gen?.genId ?? `GEN-${id}`}</p>
   </div>
   <div class="hd-right">
-    <b>Fecha de emision</b><br>${fechaEmision}<br>
+    <b>Fecha de emisión</b><br>${fechaEmision}<br>
     <b>Hora</b><br>${horaEmision}<br>
-    <b>Periodo</b><br>${formatFecha(desde)} &mdash; ${formatFecha(hasta)}
+    <b>Período</b><br>${formatFecha(desde)} — ${formatFecha(hasta)}
   </div>
 </div>
 
 <div class="gen-card">
-  <h2>Informacion del generador</h2>
+  <h2>Información del generador</h2>
   <div class="gen-grid">
     <div class="gen-item"><div class="lbl">ID</div><div class="val">${gen?.genId ?? '—'}</div></div>
-    <div class="gen-item"><div class="lbl">Ubicacion</div><div class="val">${gen?.ubicacion ?? '—'}</div></div>
-    <div class="gen-item"><div class="lbl">Estado</div><div class="val" style="color:${gen?.estado === 'encendido' ? '#00e5a0' : '#ff4757'}">${gen?.estado ?? '—'}</div></div>
-    <div class="gen-item"><div class="lbl">Marca / Modelo</div><div class="val">${gen?.modelo?.marca ?? '—'} &mdash; ${gen?.modelo?.nombre ?? '—'}</div></div>
+    <div class="gen-item"><div class="lbl">Ubicación</div><div class="val">${gen?.ubicacion ?? '—'}</div></div>
+    <div class="gen-item"><div class="lbl">Estado</div><div class="val" style="color:${gen?.estado === 'corriendo' ? '#00e5a0' : '#ff4757'}">${gen?.estado ?? '—'}</div></div>
+    <div class="gen-item"><div class="lbl">Marca / Modelo</div><div class="val">${gen?.modelo?.marca ?? '—'} — ${gen?.modelo?.nombre ?? '—'}</div></div>
     <div class="gen-item"><div class="lbl">Horas acumuladas</div><div class="val">${hAcumTexto}</div></div>
     <div class="gen-item"><div class="lbl">Gasolina actual</div><div class="val">${gen?.gasolinaActualLitros ?? 0}L / ${gen?.modelo?.capacidadGasolina ?? '—'}L</div></div>
     <div class="gen-item"><div class="lbl">Consumo (L/h)</div><div class="val">${gen?.modelo?.consumoGasolinaHoras ?? '—'}</div></div>
     <div class="gen-item"><div class="lbl">Intervalo aceite</div><div class="val">${gen?.modelo?.intervaloCambioAceite ?? '—'}h</div></div>
   </div>
-  ${gen?.descripcion ? `<p style="font-size:11px;color:#64748b;margin-top:10px">${gen.descripcion}</p>` : ''}
 </div>
 
 <div class="sec">
-  <div class="sec-title">Estadisticas del periodo</div>
+  <div class="sec-title">Estadísticas de operación</div>
   <div class="stats-grid">
     <div class="stat-card" style="background:rgba(0,229,160,0.08);border-color:rgba(0,229,160,0.3)">
       <div class="val" style="color:#00e5a0">${stats?.totalSesiones ?? 0}</div><div class="lbl">Total sesiones</div>
     </div>
     <div class="stat-card" style="background:rgba(99,102,241,0.1);border-color:rgba(99,102,241,0.3)">
-      <div class="val" style="color:#818cf8">${hTotal}</div><div class="lbl">Horas en periodo</div>
+      <div class="val" style="color:#818cf8">${hTotal}</div><div class="lbl">Horas en período</div>
     </div>
     <div class="stat-card" style="background:rgba(52,211,199,0.08);border-color:rgba(52,211,199,0.3)">
       <div class="val" style="color:#34d3c7">${hAcumTexto}</div><div class="lbl">Horas acumuladas</div>
     </div>
-    <div class="stat-card" style="background:rgba(200,224,106,0.08);border-color:rgba(200,224,106,0.3)">
-      <div class="val" style="color:#c8e06a">${stats?.cambiosAceite ?? 0}</div><div class="lbl">Cambios de aceite</div>
-    </div>
-    <div class="stat-card" style="background:rgba(255,159,67,0.08);border-color:rgba(255,159,67,0.3)">
-      <div class="val" style="color:#ff9f43">${stats?.litrosTotalesRecargados ?? 0}L</div><div class="lbl">Litros recargados</div>
-    </div>
     <div class="stat-card" style="background:rgba(255,71,87,0.08);border-color:rgba(255,71,87,0.3)">
       <div class="val" style="color:#ff6b81">${stats?.totalAlertas ?? 0}</div><div class="lbl">Total alertas</div>
+    </div>
+    <div class="stat-card" style="background:rgba(0,229,160,0.06);border-color:rgba(0,229,160,0.2)">
+      <div class="val" style="color:#00e5a0">${stats?.sesionesAutomaticas ?? 0}</div><div class="lbl">Automáticas</div>
+    </div>
+    <div class="stat-card" style="background:rgba(129,140,248,0.06);border-color:rgba(129,140,248,0.2)">
+      <div class="val" style="color:#818cf8">${stats?.sesionesManuales ?? 0}</div><div class="lbl">Manuales</div>
     </div>
   </div>
 </div>
 
+${tablaMants ? `
+<div class="sec">
+  <div class="sec-title">Mantenimientos realizados</div>
+  <div class="chips-row">
+    ${TIPOS_ORDEN.filter(t => (stats?.conteosPorTipo?.[t] ?? 0) > 0).map(t => {
+        const cfg   = TIPO_MANT_CONFIG[t];
+        const count = stats?.conteosPorTipo?.[t] ?? 0;
+        return `<div class="chip" style="background:${cfg.color}18;border-color:${cfg.color}40;color:${cfg.color}">${cfg.label}: ${count}</div>`;
+    }).join('')}
+  </div>
+  <div class="gen-card" style="padding:0;overflow:hidden;margin-top:14px">
+    <table>
+      <thead><tr><th>Tipo</th><th>Registros</th></tr></thead>
+      <tbody>${tablaMants}</tbody>
+    </table>
+  </div>
+</div>` : ''}
+
 ${(graf.sesionesPorMes ?? []).length > 0 ? `
 <div class="sec">
-  <div class="sec-title">Operacion mensual</div>
+  <div class="sec-title">Operación mensual</div>
   <div class="two-col">
     <div class="chart-card">
       <h3>Sesiones por mes</h3><p>Veces encendido mensualmente</p>
@@ -385,28 +527,25 @@ ${(graf.sesionesPorMes ?? []).length > 0 ? `
   </div>
 </div>` : ''}
 
+${barsPorTipoIndiv ? `
 <div class="sec">
-  <div class="sec-title">Mantenimiento</div>
-  <div class="two-col">
-    ${(graf.gasolinaPorMes ?? []).length > 0 ? `
-    <div class="chart-card">
-      <h3>Combustible por mes</h3><p>Litros recargados</p>
-      ${barGas}
-    </div>` : '<div></div>'}
-    ${(graf.aceitePorMes ?? []).length > 0 ? `
-    <div class="chart-card">
-      <h3>Cambios de aceite</h3><p>Por mes</p>
-      ${barAceite}
-    </div>` : '<div></div>'}
-  </div>
-</div>
+  <div class="sec-title">Combustible</div>
+  <div class="two-col">${barsPorTipoIndiv}</div>
+</div>` : ''}
+
+${grupoFiltrosPDF || grupoMotorPDF || grupoElectricPDF ? `
+<div class="sec">
+  <div class="sec-title">Mantenimientos por grupo</div>
+  ${grupoFiltrosPDF}
+  ${grupoMotorPDF}
+  ${grupoElectricPDF}
+</div>` : ''}
 
 ${acum.length > 0 ? `
 <div class="sec">
   <div class="sec-title">Horas acumuladas en el tiempo</div>
   <div class="chart-card">
-    <h3>Curva de operacion acumulada</h3>
-    <p>Crecimiento historico</p>
+    <h3>Curva de operación acumulada</h3><p>Crecimiento histórico</p>
     ${svgLinea || '<p style="color:#64748b;font-size:11px">Se requieren al menos 2 sesiones cerradas</p>'}
     ${proxHTML}
   </div>
@@ -414,17 +553,17 @@ ${acum.length > 0 ? `
 
 ${tl.length > 0 ? `
 <div class="sec">
-  <div class="sec-title">Linea de tiempo (${Math.min(tl.length, 40)} de ${tl.length} eventos)</div>
+  <div class="sec-title">Línea de tiempo (${Math.min(tl.length, 40)} de ${tl.length} eventos)</div>
   <div class="chart-card" style="padding:0;overflow:hidden">
     <table>
-      <thead><tr><th style="width:24px"></th><th>Descripcion</th><th>Fecha y hora</th></tr></thead>
+      <thead><tr><th style="width:24px"></th><th>Descripción</th><th>Fecha y hora</th></tr></thead>
       <tbody>${htmlTimeline(tl)}</tbody>
     </table>
   </div>
 </div>` : ''}
 
 <div class="footer">
-  <span>${gen?.genId ?? `GEN-${id}`} &middot; ${gen?.ubicacion ?? ''} &middot; Generado automaticamente</span>
+  <span>${gen?.genId ?? `GEN-${id}`} · ${gen?.ubicacion ?? ''} · Generado automáticamente</span>
   <span>${fechaEmision} ${horaEmision}</span>
 </div>
 
@@ -446,22 +585,20 @@ ${tl.length > 0 ? `
         }
     };
 
-    /* ── Datos derivados ────────────────────────────────────────── */
+    /* ── Datos derivados ──────────────────────────────────────────────────── */
     const datos    = reporte?.datos;
     const gen      = datos?.generador;
     const stats    = datos?.estadisticas;
     const graficos = datos?.graficos;
     const timeline = datos?.timeline ?? [];
 
-    /*  Gráficos en pantalla */
     const graficoSesiones = graficos?.sesionesPorMes?.length > 0 ? {
-        labels:   graficos.sesionesPorMes.map((m: any) => m.mes),
+        labels:   graficos.sesionesPorMes.map((m: any) => m.mes.slice(0, 3)),
         datasets: [{ data: graficos.sesionesPorMes.map((m: any) => Number(m.total) || 0) }],
     } : null;
 
-    // m.horas viene en segundos → convertir a horas decimales para el eje Y
     const graficoHoras = graficos?.sesionesPorMes?.length > 0 ? {
-        labels:   graficos.sesionesPorMes.map((m: any) => m.mes),
+        labels:   graficos.sesionesPorMes.map((m: any) => m.mes.slice(0, 3)),
         datasets: [{ data: graficos.sesionesPorMes.map((m: any) =>
             Math.max(segsAHorasDec(parseFloat(m.horas ?? 0)), 0)
         )}],
@@ -469,33 +606,94 @@ ${tl.length > 0 ? `
 
     const graficoPastel = stats ? [
         { name: 'Manual',     count: stats.sesionesManuales    || 0, color: '#00e5a0', legendFontColor: COLORS.textSecondary, legendFontSize: 12 },
-        { name: 'Automatico', count: stats.sesionesAutomaticas || 0, color: '#818cf8', legendFontColor: COLORS.textSecondary, legendFontSize: 12 },
+        { name: 'Automático', count: stats.sesionesAutomaticas || 0, color: '#818cf8', legendFontColor: COLORS.textSecondary, legendFontSize: 12 },
     ] : null;
 
-    const graficoGasolina = graficos?.gasolinaPorMes?.length > 0 ? {
-        labels:   graficos.gasolinaPorMes.map((m: any) => m.mes),
-        datasets: [{ data: graficos.gasolinaPorMes.map((m: any) => Math.max(parseFloat(m.litros ?? 0), 0)) }],
+    const graficoGasolina = graficos?.mantenimientosPorMes?.gasolina?.length > 0 ? {
+        labels:   graficos.mantenimientosPorMes.gasolina.map((m: any) => m.mes.slice(0, 3)),
+        datasets: [{ data: graficos.mantenimientosPorMes.gasolina.map((m: any) => Math.max(parseFloat(m.litros ?? 0), 0)) }],
     } : null;
 
-    // horasAcumuladas ya viene en horas decimales del backend
     const acum = graficos?.horasAcumuladas ?? [];
     const graficoLinea = acum.length >= 2 ? {
         labels: acum.map((p: any, i: number) => {
-            const step = Math.ceil(acum.length / 5); // solo 4 labels visibles
-            return i % step === 0 ? p.fecha : '';
+            const step = Math.ceil(acum.length / 5);
+            return i % step === 0 ? p.fecha.slice(0, 5) : '';
         }),
         datasets: [{ data: acum.map((p: any) => p.horasAcumuladas), strokeWidth: 2 }],
     } : null;
 
     const hayDatosPastel = graficoPastel !== null && graficoPastel.some(p => p.count > 0);
 
-    const GRAFICOS = [
-        { titulo: 'Sesiones por mes',    subtitulo: 'Veces encendido',          tipo: 'bar',  data: graficoSesiones,                    color: '#00e5a0', sufijo: '' },
-        { titulo: 'Horas de operacion',  subtitulo: 'Horas por mes',            tipo: 'bar',  data: graficoHoras,                       color: '#818cf8', sufijo: 'h' },
-        { titulo: 'Tipo de inicio',      subtitulo: 'Manual vs Automatico',     tipo: 'pie',  data: hayDatosPastel ? graficoPastel : null, color: '#c8e06a', sufijo: '' },
-        { titulo: 'Consumo de gasolina', subtitulo: 'Litros recargados / mes',  tipo: 'bar',  data: graficoGasolina,                    color: '#ff9f43', sufijo: 'L' },
-        { titulo: 'Horas acumuladas',    subtitulo: 'Crecimiento en el tiempo', tipo: 'line', data: graficoLinea,                       color: '#34d3c7', sufijo: 'h' },
-    ].filter(g => g.data !== null);
+    // ── Construcción del carrusel de gráficas ─────────────────────────────
+    // Cada entrada puede ser tipo 'bar' | 'pie' | 'line' | 'grupo'
+    type GraficoItem = {
+        titulo: string;
+        subtitulo: string;
+        tipo: 'bar' | 'pie' | 'line' | 'grupo';
+        data: any;
+        color: string;
+        sufijo?: string;
+        grupoTipos?: string[];
+    };
+
+    const GRAFICOS: GraficoItem[] = [
+        // ── Operación ─────────────────────────────────────────────────────
+        graficoSesiones && {
+            titulo: 'Sesiones por mes', subtitulo: 'Veces encendido',
+            tipo: 'bar', data: graficoSesiones, color: '#00e5a0', sufijo: '',
+        },
+        graficoHoras && {
+            titulo: 'Horas de operación', subtitulo: 'Horas por mes',
+            tipo: 'bar', data: graficoHoras, color: '#818cf8', sufijo: 'h',
+        },
+        hayDatosPastel && {
+            titulo: 'Tipo de inicio', subtitulo: 'Manual vs Automático',
+            tipo: 'pie', data: graficoPastel, color: '#c8e06a', sufijo: '',
+        },
+        // ── Combustible individual ─────────────────────────────────────────
+        graficoGasolina && {
+            titulo: 'Combustible', subtitulo: 'Litros recargados por mes',
+            tipo: 'bar', data: graficoGasolina, color: '#ff9f43', sufijo: 'L',
+        },
+        // ── Grupos de mantenimientos ──────────────────────────────────────
+        graficos?.grupoFiltros?.length > 0 && {
+            titulo:      GRUPOS_CONFIG.grupoFiltros.titulo,
+            subtitulo:   GRUPOS_CONFIG.grupoFiltros.subtitulo,
+            tipo:        'grupo',
+            data:        graficos.grupoFiltros,
+            color:       GRUPOS_CONFIG.grupoFiltros.color,
+            grupoTipos:  GRUPOS_CONFIG.grupoFiltros.tipos,
+        },
+        graficos?.grupoMotor?.length > 0 && {
+            titulo:      GRUPOS_CONFIG.grupoMotor.titulo,
+            subtitulo:   GRUPOS_CONFIG.grupoMotor.subtitulo,
+            tipo:        'grupo',
+            data:        graficos.grupoMotor,
+            color:       GRUPOS_CONFIG.grupoMotor.color,
+            grupoTipos:  GRUPOS_CONFIG.grupoMotor.tipos,
+        },
+        graficos?.grupoElectric?.length > 0 && {
+            titulo:      GRUPOS_CONFIG.grupoElectric.titulo,
+            subtitulo:   GRUPOS_CONFIG.grupoElectric.subtitulo,
+            tipo:        'grupo',
+            data:        graficos.grupoElectric,
+            color:       GRUPOS_CONFIG.grupoElectric.color,
+            grupoTipos:  GRUPOS_CONFIG.grupoElectric.tipos,
+        },
+        // ── Línea acumulada ───────────────────────────────────────────────
+        graficoLinea && {
+            titulo: 'Horas acumuladas', subtitulo: 'Crecimiento en el tiempo',
+            tipo: 'line', data: graficoLinea, color: '#34d3c7', sufijo: 'h',
+        },
+    ].filter(Boolean) as GraficoItem[];
+
+    // ── Estadísticas de mantenimientos — muestra TODOS con 0 si no hay ────
+    const statsMants = TIPOS_ORDEN.map(t => {
+        const cfg   = TIPO_MANT_CONFIG[t];
+        const count = stats?.conteosPorTipo?.[t] ?? 0;
+        return { label: cfg.label, icon: cfg.icon, value: count, color: cfg.color };
+    });
 
     const iconoTimeline = (tipo: string) => {
         switch (tipo) {
@@ -507,14 +705,10 @@ ${tl.length > 0 ? `
         }
     };
 
-    /*  Render  */
+    /* ── Render ───────────────────────────────────────────────────────────── */
     return (
         <View style={s.container}>
-            <ImageBackground
-                source={require('@/assets/images/bg-login.png')}
-                style={StyleSheet.absoluteFill}
-                resizeMode="cover"
-            />
+            <ImageBackground source={require('@/assets/images/bg-login.png')} style={StyleSheet.absoluteFill} resizeMode="cover" />
             <View style={s.overlay} />
 
             {/* Header */}
@@ -577,15 +771,15 @@ ${tl.length > 0 ? `
 
                 {reporte && (
                     <>
-                        {/* ── Ficha generador ── */}
+                        {/* Ficha generador */}
                         {gen && (
                             <Animated.View style={{ opacity: fadeAnims[0], transform: [{ translateY: slideAnims[0] }] }}>
                                 <View style={s.card}>
-                                    <Text style={s.cardTitle}>Informacion del generador</Text>
+                                    <Text style={s.cardTitle}>Información del generador</Text>
                                     <View style={s.infoGrid}>
                                         {[
                                             { lbl: 'Nombre',      val: gen.genId },
-                                            { lbl: 'Ubicacion',   val: gen.ubicacion },
+                                            { lbl: 'Ubicación',   val: gen.ubicacion },
                                             { lbl: 'Marca',       val: gen.modelo?.marca },
                                             { lbl: 'Modelo',      val: gen.modelo?.nombre },
                                             { lbl: 'Horas acum.', val: segsAHorasMin(gen.horasTotalesAcum) },
@@ -603,23 +797,20 @@ ${tl.length > 0 ? `
                             </Animated.View>
                         )}
 
-                        {/* ── Carrusel gráficos ── */}
+                        {/* ── Carrusel de gráficas ── */}
                         <Animated.View style={{ opacity: fadeAnims[1], transform: [{ translateY: slideAnims[1] }] }}>
                             {GRAFICOS.length > 0 ? (
                                 <View style={s.card}>
                                     <View style={s.graficoHeader}>
                                         <View style={{ flex: 1 }}>
-                                            <Text style={s.cardTitle}>{GRAFICOS[graficoActivo].titulo}</Text>
-                                            <Text style={s.graficoSub}>{GRAFICOS[graficoActivo].subtitulo}</Text>
+                                            <Text style={s.cardTitle}>{GRAFICOS[graficoActivo]?.titulo}</Text>
+                                            <Text style={s.graficoSub}>{GRAFICOS[graficoActivo]?.subtitulo}</Text>
                                         </View>
                                         <View style={s.dots}>
                                             {GRAFICOS.map((g, i) => (
                                                 <TouchableOpacity key={i}
                                                     style={[s.dot, i === graficoActivo && { ...s.dotActive, backgroundColor: g.color }]}
-                                                    onPress={() => {
-                                                        setGraficoActivo(i);
-                                                        scrollRef.current?.scrollTo({ x: i * CHART_W, animated: true });
-                                                    }}
+                                                    onPress={() => { setGraficoActivo(i); scrollRef.current?.scrollTo({ x: i * CHART_W, animated: true }); }}
                                                 />
                                             ))}
                                         </View>
@@ -632,29 +823,23 @@ ${tl.length > 0 ? `
                                             showsHorizontalScrollIndicator={false}
                                             snapToInterval={CHART_W}
                                             decelerationRate="fast"
-                                            onMomentumScrollEnd={e => {
-                                                setGraficoActivo(Math.round(e.nativeEvent.contentOffset.x / CHART_W));
-                                            }}
+                                            onMomentumScrollEnd={e => setGraficoActivo(Math.round(e.nativeEvent.contentOffset.x / CHART_W))}
                                         >
                                             {GRAFICOS.map((g, i) => (
                                                 <View key={i} style={[s.graficoSlide, { width: CHART_W }]}>
                                                     {g.tipo === 'bar' && g.data && (
                                                         <BarChart
-                                                            data={g.data as any}
+                                                            data={g.data}
                                                             width={CHART_W - 8} height={200}
-                                                            chartConfig={{
-                                                                ...chartConfigBase,
-                                                                color: hexToChartColor(g.color),
-                                                                decimalPlaces: g.sufijo === 'h' ? 1 : 0,
-                                                            }}
+                                                            chartConfig={{ ...chartConfigBase, color: hexToChartColor(g.color), decimalPlaces: g.sufijo === 'h' || g.sufijo === 'L' ? 1 : 0 }}
                                                             style={{ borderRadius: 12 }}
                                                             showValuesOnTopOfBars fromZero
-                                                            yAxisLabel="" yAxisSuffix={g.sufijo}
+                                                            yAxisLabel="" yAxisSuffix={g.sufijo ?? ''}
                                                         />
                                                     )}
                                                     {g.tipo === 'pie' && g.data && (
                                                         <PieChart
-                                                            data={g.data as any}
+                                                            data={g.data}
                                                             width={CHART_W - 8} height={200}
                                                             chartConfig={chartConfigBase}
                                                             accessor="count"
@@ -664,18 +849,21 @@ ${tl.length > 0 ? `
                                                     )}
                                                     {g.tipo === 'line' && g.data && (
                                                         <LineChart
-                                                            data={g.data as any}
+                                                            data={g.data}
                                                             width={CHART_W - 8} height={200}
-                                                            chartConfig={{
-                                                                ...chartConfigBase,
-                                                                decimalPlaces: 1,
-                                                                color: hexToChartColor(g.color),
-                                                                propsForDots: { r: '4', strokeWidth: '2', stroke: g.color },
-                                                            }}
+                                                            chartConfig={{ ...chartConfigBase, decimalPlaces: 1, color: hexToChartColor(g.color), propsForDots: { r: '4', strokeWidth: '2', stroke: g.color } }}
                                                             style={{ borderRadius: 12 }}
                                                             bezier withDots withInnerLines
                                                             yAxisLabel="" yAxisSuffix="h"
                                                             formatXLabel={(label) => label.slice(0, 5)}
+                                                        />
+                                                    )}
+                                                    {g.tipo === 'grupo' && g.data && g.grupoTipos && (
+                                                        <GrupoBarChart
+                                                            data={g.data}
+                                                            tipos={g.grupoTipos}
+                                                            color={g.color}
+                                                            width={CHART_W - 8}
                                                         />
                                                     )}
                                                 </View>
@@ -683,9 +871,10 @@ ${tl.length > 0 ? `
                                         </ScrollView>
                                     </View>
 
+                                    {/* Proyección aceite — solo en gráfica de línea */}
                                     {GRAFICOS[graficoActivo]?.tipo === 'line' && graficos?.proximoMantenimiento && (
                                         <View style={s.proxCard}>
-                                            <Text style={s.proxTitle}>Proximo cambio de aceite</Text>
+                                            <Text style={s.proxTitle}>Próximo cambio de aceite</Text>
                                             <View style={s.proxRow}>
                                                 <View style={s.proxItem}>
                                                     <Text style={[s.proxVal, { color: '#ff9f43' }]}>{graficos.proximoMantenimiento.horasProximoCambio}h</Text>
@@ -698,10 +887,27 @@ ${tl.length > 0 ? `
                                                 {graficos.proximoMantenimiento.diasRestantes && (
                                                     <View style={s.proxItem}>
                                                         <Text style={[s.proxVal, { color: '#fb923c' }]}>~{graficos.proximoMantenimiento.diasRestantes}</Text>
-                                                        <Text style={s.proxLbl}>Dias estimados</Text>
+                                                        <Text style={s.proxLbl}>Días estimados</Text>
                                                     </View>
                                                 )}
                                             </View>
+                                        </View>
+                                    )}
+
+                                    {/* Desglose debajo de gráficas de grupo */}
+                                    {GRAFICOS[graficoActivo]?.tipo === 'grupo' && GRAFICOS[graficoActivo]?.grupoTipos && (
+                                        <View style={s.grupoDesglose}>
+                                            {GRAFICOS[graficoActivo].grupoTipos!.map(t => {
+                                                const cfg   = TIPO_MANT_CONFIG[t];
+                                                const count = stats?.conteosPorTipo?.[t] ?? 0;
+                                                return (
+                                                    <View key={t} style={[s.grupoChip, { backgroundColor: `${cfg.color}18`, borderColor: `${cfg.color}40` }]}>
+                                                        <Ionicons name={cfg.icon as any} size={12} color={cfg.color} />
+                                                        <Text style={[s.grupoChipLabel, { color: cfg.color }]}>{cfg.label}</Text>
+                                                        <Text style={[s.grupoChipVal, { color: cfg.color }]}>{count}</Text>
+                                                    </View>
+                                                );
+                                            })}
                                         </View>
                                     )}
 
@@ -726,22 +932,22 @@ ${tl.length > 0 ? `
                             ) : (
                                 <View style={[s.card, s.emptyCard]}>
                                     <Ionicons name="bar-chart-outline" size={36} color={COLORS.textMuted} />
-                                    <Text style={s.emptyText}>No hay graficos que mostrar{'\n'}para este periodo</Text>
+                                    <Text style={s.emptyText}>No hay gráficos que mostrar{'\n'}para este período</Text>
                                 </View>
                             )}
                         </Animated.View>
 
-                        {/* ── Estadísticas ── */}
+                        {/* ── Estadísticas de operación ── */}
                         <Animated.View style={{ opacity: fadeAnims[2], transform: [{ translateY: slideAnims[2] }] }}>
                             <View style={s.card}>
-                                <Text style={s.cardTitle}>Estadisticas de uso</Text>
+                                <Text style={s.cardTitle}>Estadísticas de uso</Text>
                                 <View style={s.statsGrid}>
                                     {[
                                         { label: 'Total sesiones',    value: stats?.totalSesiones },
-                                        { label: 'Horas en periodo',  value: segsAHorasMin(stats?.horasTotalesPeriodo) },
-                                        { label: 'Cambios aceite',    value: stats?.cambiosAceite },
-                                        { label: 'Recargas gasolina', value: stats?.recargasGasolina },
-                                        { label: 'Litros recargados', value: `${stats?.litrosTotalesRecargados}L` },
+                                        { label: 'Horas en período',  value: segsAHorasMin(stats?.horasTotalesPeriodo) },
+                                        { label: 'Automáticas',       value: stats?.sesionesAutomaticas },
+                                        { label: 'Manuales',          value: stats?.sesionesManuales },
+                                        { label: 'Litros recargados', value: `${stats?.litrosTotalesRecargados ?? 0}L` },
                                         { label: 'Total alertas',     value: stats?.totalAlertas },
                                     ].map((item, i) => {
                                         const pal = STAT_PALETTE[i % STAT_PALETTE.length];
@@ -753,19 +959,46 @@ ${tl.length > 0 ? `
                                         );
                                     })}
                                 </View>
+
+                                {/* ── Chips de mantenimientos ── */}
+                                {stats && (
+                                    <>
+                                        <View style={s.mantTitleRow}>
+                                            <Text style={s.mantSectionTitle}>Mantenimientos realizados</Text>
+                                            <View style={[s.mantBadge]}>
+                                                <Text style={s.mantBadgeText}>
+                                                    {TIPOS_ORDEN.reduce((a, t) => a + (stats?.conteosPorTipo?.[t] ?? 0), 0)} total
+                                                </Text>
+                                            </View>
+                                        </View>
+                                        <View style={s.chipsWrap}>
+                                            {statsMants.map((item, i) => (
+                                                <View key={i} style={[s.chip, { backgroundColor: `${item.color}18`, borderColor: `${item.color}40` }]}>
+                                                    <Ionicons name={item.icon as any} size={13} color={item.color} />
+                                                    <View style={{ flex: 1 }}>
+                                                        <Text style={[s.chipLabel, { color: item.color }]}>{item.label}</Text>
+                                                    </View>
+                                                    <View style={[s.chipCount, { backgroundColor: `${item.color}28` }]}>
+                                                        <Text style={[s.chipCountText, { color: item.color }]}>{item.value}</Text>
+                                                    </View>
+                                                </View>
+                                            ))}
+                                        </View>
+                                    </>
+                                )}
                             </View>
                         </Animated.View>
 
-                        {/* ── Timeline ── */}
+                        {/* Timeline */}
                         <Animated.View style={{ opacity: fadeAnims[3], transform: [{ translateY: slideAnims[3] }] }}>
                             {timeline.length > 0 ? (
                                 <View style={s.card}>
                                     <View style={s.timelineHeaderRow}>
-                                        <Text style={s.cardTitle}>Linea de tiempo</Text>
+                                        <Text style={s.cardTitle}>Línea de tiempo</Text>
                                         <Text style={s.timelineBadge}>{timeline.length} eventos</Text>
                                     </View>
                                     <ScrollView style={s.timelineScroll} nestedScrollEnabled showsVerticalScrollIndicator={false}>
-                                        {timeline.map((item: any, i: number) => {
+                                        {timeline.slice(0, 15).map((item: any, i: number) => {
                                             const { icon, color } = iconoTimeline(item.tipo);
                                             return (
                                                 <View key={i} style={s.timelineItem}>
@@ -791,27 +1024,27 @@ ${tl.length > 0 ? `
                             ) : (
                                 <View style={[s.card, s.emptyCard]}>
                                     <Ionicons name="document-outline" size={36} color={COLORS.textMuted} />
-                                    <Text style={s.emptyText}>Sin actividad en el periodo seleccionado</Text>
+                                    <Text style={s.emptyText}>Sin actividad en el período seleccionado</Text>
                                 </View>
                             )}
                         </Animated.View>
 
-                        {/* ── Info del reporte ── */}
+                        {/* Info reporte + exportar */}
                         <Animated.View style={{ opacity: fadeAnims[4], transform: [{ translateY: slideAnims[4] }] }}>
                             <View style={s.card}>
-                                <Text style={s.cardTitle}>Informacion del reporte</Text>
+                                <Text style={s.cardTitle}>Información del reporte</Text>
                                 <View style={s.infoGrid}>
                                     {[
                                         { lbl: 'Generador',     val: gen?.genId ?? `GEN-${id}` },
-                                        { lbl: 'Estado actual', val: gen?.estado ?? '—', color: gen?.estado === 'encendido' ? '#00e5a0' : '#ff4757' },
-                                        { lbl: 'Ubicacion',     val: gen?.ubicacion ?? '—' },
-                                        { lbl: 'Periodo',       val: `${formatFecha(desde)} - ${formatFecha(hasta)}` },
+                                        { lbl: 'Estado actual', val: gen?.estado ?? '—', color: gen?.estado === 'corriendo' ? '#00e5a0' : '#ff4757' },
+                                        { lbl: 'Ubicación',     val: gen?.ubicacion ?? '—' },
+                                        { lbl: 'Período',       val: `${formatFecha(desde)} - ${formatFecha(hasta)}` },
                                         { lbl: 'Modelo',        val: gen?.modelo?.nombre ?? '—' },
                                         { lbl: 'Generado',      val: formatFecha(new Date()) },
                                     ].map((item, i) => (
                                         <View key={i} style={s.infoGridItem}>
                                             <Text style={s.infoGridLabel}>{item.lbl}</Text>
-                                            <Text style={[s.infoGridVal, item.color ? { color: item.color } : {}]}>
+                                            <Text style={[s.infoGridVal, (item as any).color ? { color: (item as any).color } : {}]}>
                                                 {item.val}
                                             </Text>
                                         </View>
@@ -851,19 +1084,14 @@ const s = StyleSheet.create({
     fechasRow:         { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 16 },
     fechaBtn:          { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: 12, padding: 12, borderWidth: 1, borderColor: 'rgba(0,229,160,0.2)' },
     fechaBtnText:      { fontSize: 13, color: COLORS.textPrimary, fontWeight: '500' },
-    fechaSep:          { color: COLORS.textMuted, fontSize: 16 },
     generarBtn:        { borderRadius: 12, overflow: 'hidden' },
     generarGradient:   { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 14 },
     generarText:       { color: '#fff', fontWeight: '700', fontSize: 15 },
-    genGrid:           { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-    genItem:           { width: '31%', backgroundColor: 'rgba(255,255,255,0.04)', borderRadius: 10, padding: 10, borderWidth: 1, borderColor: 'rgba(255,255,255,0.07)' },
-    genLbl:            { fontSize: 10, color: COLORS.textMuted, marginBottom: 3, textTransform: 'uppercase', letterSpacing: 0.4 },
-    genVal:            { fontSize: 13, color: COLORS.textPrimary, fontWeight: '600' },
     graficoHeader:     { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 },
     graficoSub:        { fontSize: 11, color: COLORS.textMuted, marginTop: 2 },
-    graficoArea:       { height: 210, overflow: 'hidden' },
-    graficoSlide:      { paddingHorizontal: 4, height: 210, justifyContent: 'center' },
-    dots:              { flexDirection: 'row', gap: 6, marginTop: 4 },
+    graficoArea:       { minHeight: 210, overflow: 'hidden' },
+    graficoSlide:      { paddingHorizontal: 4, minHeight: 210, justifyContent: 'center' },
+    dots:              { flexDirection: 'row', gap: 6, marginTop: 4, flexWrap: 'wrap', maxWidth: 120, justifyContent: 'flex-end' },
     dot:               { width: 6, height: 6, borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.2)' },
     dotActive:         { width: 16 },
     flechasRow:        { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 12 },
@@ -876,10 +1104,27 @@ const s = StyleSheet.create({
     proxItem:          { alignItems: 'center' },
     proxVal:           { fontSize: 20, fontWeight: '800' },
     proxLbl:           { fontSize: 10, color: COLORS.textMuted, marginTop: 2 },
+    // Desglose de grupo
+    grupoDesglose:     { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 },
+    grupoChip:         { flexDirection: 'row', alignItems: 'center', gap: 5, borderRadius: 20, borderWidth: 1, paddingHorizontal: 10, paddingVertical: 6 },
+    grupoChipLabel:    { fontSize: 11, fontWeight: '600' },
+    grupoChipVal:      { fontSize: 12, fontWeight: '800', marginLeft: 4 },
+    // Stats
     statsGrid:         { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
     statBox:           { width: '47%', borderRadius: 14, padding: 14, borderWidth: 1 },
     statValue:         { fontSize: 22, fontWeight: '800', marginBottom: 4 },
     statLabel:         { fontSize: 11, color: COLORS.textMuted },
+    // Chips de mantenimientos
+    mantTitleRow:      { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 20, marginBottom: 12 },
+    mantSectionTitle:  { fontSize: 14, fontWeight: '700', color: COLORS.textPrimary },
+    mantBadge:         { backgroundColor: 'rgba(255,255,255,0.07)', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 3 },
+    mantBadgeText:     { fontSize: 11, color: COLORS.textMuted },
+    chipsWrap:         { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+    chip:              { flexDirection: 'row', alignItems: 'center', gap: 6, borderRadius: 12, borderWidth: 1, paddingHorizontal: 10, paddingVertical: 8, width: '48%' },
+    chipLabel:         { fontSize: 11, fontWeight: '600', flex: 1 },
+    chipCount:         { borderRadius: 8, paddingHorizontal: 7, paddingVertical: 2 },
+    chipCountText:     { fontSize: 12, fontWeight: '800' },
+    // Timeline
     timelineHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 0 },
     timelineBadge:     { fontSize: 11, color: COLORS.textMuted, backgroundColor: 'rgba(255,255,255,0.06)', paddingHorizontal: 10, paddingVertical: 3, borderRadius: 20, marginBottom: 16 },
     timelineScroll:    { maxHeight: 340 },
@@ -890,6 +1135,7 @@ const s = StyleSheet.create({
     timelineContent:   { flex: 1, paddingBottom: 16 },
     timelineDesc:      { fontSize: 13, color: COLORS.textPrimary, fontWeight: '500', marginBottom: 2 },
     timelineTime:      { fontSize: 11, color: COLORS.textMuted },
+    // Info grid
     infoGrid:          { flexDirection: 'row', flexWrap: 'wrap', gap: 0, marginBottom: 4 },
     infoGridItem:      { width: '50%', paddingVertical: 12, paddingHorizontal: 4 },
     infoGridLabel:     { fontSize: 12, color: COLORS.textMuted, marginBottom: 4 },
