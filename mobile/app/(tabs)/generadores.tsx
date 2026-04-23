@@ -9,6 +9,7 @@ import { GeneradorListCard }   from '@/components/generadores/GeneradorListCard'
 import { NuevoGeneradorModal } from '@/components/generadores/NuevoGeneradorModal';
 import { useDebounce }         from '@/hooks/useDebounce';
 import { useData }             from '@/provider/DataProvider';
+import { useAuth }             from '@/provider/AuthProvider';
 import { COLORS }              from '@/assets/styles/colors';
 
 interface Generador {
@@ -61,6 +62,9 @@ function AnimatedCard({ item, index, listReady, now }: {
 // ─── Screen ─────────────────────────────────────────────────
 export default function Generadores() {
     const { generadores, recargar } = useData();
+    const { usuario }               = useAuth();
+
+    const puedeCrear = usuario?.isAdmin;
 
     const [busqueda,     setBusqueda]     = useState('');
     const [refreshing,   setRefreshing]   = useState(false);
@@ -70,32 +74,22 @@ export default function Generadores() {
     const headerAnim        = useRef(new Animated.Value(0)).current;
     const debouncedBusqueda = useDebounce(busqueda, 300);
 
-    // 🔥 RELOJ GLOBAL
     const [now, setNow] = useState(Date.now());
 
     useEffect(() => {
-        const interval = setInterval(() => {
-            setNow(Date.now());
-        }, 1000);
-
+        const interval = setInterval(() => setNow(Date.now()), 1000);
         return () => clearInterval(interval);
     }, []);
 
-    // Animación inicial
     useEffect(() => {
         if (generadores.length === 0) return;
-
         Animated.timing(headerAnim, {
-            toValue: 1,
-            duration: 350,
-            useNativeDriver: true,
+            toValue: 1, duration: 350, useNativeDriver: true,
         }).start(() => setListReady(true));
     }, []);
 
     useEffect(() => {
-        if (generadores.length > 0 && !listReady) {
-            setListReady(true);
-        }
+        if (generadores.length > 0 && !listReady) setListReady(true);
     }, [generadores]);
 
     const onRefresh = async () => {
@@ -143,7 +137,7 @@ export default function Generadores() {
                         opacity: headerAnim,
                         transform: [{
                             translateY: headerAnim.interpolate({
-                                inputRange: [0, 1],
+                                inputRange:  [0, 1],
                                 outputRange: [-20, 0],
                             }),
                         }],
@@ -157,13 +151,19 @@ export default function Generadores() {
                         </Text>
                     </View>
 
-                    <TouchableOpacity
-                        style={styles.addBtn}
-                        onPress={() => setModalVisible(true)}
-                        activeOpacity={0.8}
-                    >
-                        <Ionicons name="add" size={22} color={COLORS.primary} />
-                    </TouchableOpacity>
+                    {/* Botón + solo visible para admin */}
+                    {puedeCrear ? (
+                        <TouchableOpacity
+                            style={styles.addBtn}
+                            onPress={() => setModalVisible(true)}
+                            activeOpacity={0.8}
+                        >
+                            <Ionicons name="add" size={22} color={COLORS.primary} />
+                        </TouchableOpacity>
+                    ) : (
+                        // Placeholder para mantener el layout del header
+                        <View style={styles.addBtnPlaceholder} />
+                    )}
                 </Animated.View>
 
                 {/* Search */}
@@ -172,14 +172,13 @@ export default function Generadores() {
                         opacity: headerAnim,
                         transform: [{
                             translateY: headerAnim.interpolate({
-                                inputRange: [0, 1],
+                                inputRange:  [0, 1],
                                 outputRange: [-10, 0],
                             }),
                         }],
                     }]}
                 >
                     <Ionicons name="search-outline" size={16} color={COLORS.textMuted} />
-
                     <TextInput
                         style={styles.searchInput}
                         placeholder="Buscar por ID, modelo o nodo..."
@@ -189,7 +188,6 @@ export default function Generadores() {
                         autoCapitalize="none"
                         autoCorrect={false}
                     />
-
                     {busqueda.length > 0 && (
                         <TouchableOpacity onPress={() => setBusqueda('')}>
                             <Ionicons name="close-circle" size={16} color={COLORS.textMuted} />
@@ -197,11 +195,11 @@ export default function Generadores() {
                     )}
                 </Animated.View>
 
-                {/* LISTA */}
+                {/* Lista */}
                 <FlatList
                     data={filtrados}
                     keyExtractor={item => item.idGenerador.toString()}
-                    extraData={now} // 🔥 ESTO ES LO QUE LO ARREGLA TODO
+                    extraData={now}
                     renderItem={({ item, index }) => (
                         <AnimatedCard
                             item={item}
@@ -232,26 +230,30 @@ export default function Generadores() {
                 />
             </View>
 
-            <NuevoGeneradorModal
-                visible={modalVisible}
-                onClose={() => setModalVisible(false)}
-                onCreado={() => recargar('generadores')}
-            />
+            {/* Modal solo se monta si puede crear */}
+            {puedeCrear && (
+                <NuevoGeneradorModal
+                    visible={modalVisible}
+                    onClose={() => setModalVisible(false)}
+                    onCreado={() => recargar('generadores')}
+                />
+            )}
         </ScreenWrapper>
     );
 }
 
 const styles = StyleSheet.create({
-    container:        { flex: 1, paddingHorizontal: 20, paddingTop: 60 },
-    loadingContainer: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-    header:           { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 },
-    title:            { fontSize: 28, fontWeight: '800', color: COLORS.textPrimary },
-    subtitle:         { fontSize: 13, color: COLORS.textMuted, marginTop: 4 },
-    subtitleAccent:   { color: COLORS.primary, fontWeight: '600' },
-    addBtn:           { width: 42, height: 42, borderRadius: 21, borderWidth: 1.5, borderColor: COLORS.primary, alignItems: 'center', justifyContent: 'center', backgroundColor: `${COLORS.primary}15` },
-    searchBar:        { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 14, paddingHorizontal: 14, paddingVertical: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)', gap: 10, marginBottom: 20 },
-    searchInput:      { flex: 1, fontSize: 14, color: COLORS.textPrimary },
-    list:             { paddingBottom: 120 },
-    emptyBox:         { alignItems: 'center', paddingTop: 60, gap: 12 },
-    emptyText:        { color: COLORS.textMuted, fontSize: 14 },
+    container:          { flex: 1, paddingHorizontal: 20, paddingTop: 60 },
+    loadingContainer:   { flex: 1, alignItems: 'center', justifyContent: 'center' },
+    header:             { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 },
+    title:              { fontSize: 28, fontWeight: '800', color: COLORS.textPrimary },
+    subtitle:           { fontSize: 13, color: COLORS.textMuted, marginTop: 4 },
+    subtitleAccent:     { color: COLORS.primary, fontWeight: '600' },
+    addBtn:             { width: 42, height: 42, borderRadius: 21, borderWidth: 1.5, borderColor: COLORS.primary, alignItems: 'center', justifyContent: 'center', backgroundColor: `${COLORS.primary}15` },
+    addBtnPlaceholder:  { width: 42, height: 42 },
+    searchBar:          { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 14, paddingHorizontal: 14, paddingVertical: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)', gap: 10, marginBottom: 20 },
+    searchInput:        { flex: 1, fontSize: 14, color: COLORS.textPrimary },
+    list:               { paddingBottom: 120 },
+    emptyBox:           { alignItems: 'center', paddingTop: 60, gap: 12 },
+    emptyText:          { color: COLORS.textMuted, fontSize: 14 },
 });

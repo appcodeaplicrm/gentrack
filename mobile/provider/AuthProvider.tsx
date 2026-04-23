@@ -94,7 +94,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             headers: { 'Content-Type': 'application/json' },
             body:    JSON.stringify({ email, password }),
         });
-        console.log(res)
+        //console.log(res)
         const json = await res.json();
         
         if (!res.ok) throw new Error(json.error || 'Error al iniciar sesión');

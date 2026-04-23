@@ -12,6 +12,7 @@ import { COLORS } from '@/assets/styles/colors';
 import { ModalCambioAceite }        from '@/components/generadores/ModalCambioAceite';
 import { ModalLlenarGasolina }       from '@/components/generadores/ModalLlenarGasolina';
 import { ModalCalendarioAgendados }  from '@/components/generadores/ModalCalendarioAgendados';
+import { ModalManualGenerador }  from '@/components/generadores/ModalManual';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -56,27 +57,35 @@ const calcularGasolina = (
 };
 
 export default function GeneradorDetalle() {
-    const { id }           = useLocalSearchParams<{ id: string }>();
-    const router           = useRouter();
-    const { fetchConAuth } = useAuth();
-    const { recargar }     = useData();
+    const { id }                    = useLocalSearchParams<{ id: string }>();
+    const router                    = useRouter();
+    const { fetchConAuth, usuario } = useAuth();
+    const { recargar }              = useData();
 
-    const [generador,      setGenerador]      = useState<Generador | null>(null);
-    const [loading,        setLoading]        = useState(true);
-    const [accionando,     setAccionando]     = useState(false);
-    const [horasActivo,    setHorasActivo]    = useState('--:--:--');
-    const [gasolinaActual, setGasolinaActual] = useState(0);
-    const [alertaGasolina, setAlertaGasolina] = useState(false);
-    const [modalAceite,    setModalAceite]    = useState(false);
-    const [modalGasolina,  setModalGasolina]  = useState(false);
-    const [modalCalendario, setModalCalendario] = useState(false); // ← nuevo
+    const [generador,               setGenerador]               = useState<Generador | null>(null);
+    const [loading,                 setLoading]                 = useState(true);
+    const [accionando,              setAccionando]              = useState(false);
+    const [horasActivo,             setHorasActivo]             = useState('--:--:--');
+    const [gasolinaActual,          setGasolinaActual]          = useState(0);
+    const [alertaGasolina,          setAlertaGasolina]          = useState(false);
+    const [modalAceite,             setModalAceite]             = useState(false);
+    const [modalGasolina,           setModalGasolina]           = useState(false);
+    const [modalCalendario,         setModalCalendario]         = useState(false);
     const [segundosTotalesActuales, setSegundosTotalesActuales] = useState(0);
-    const [horasParaModal, setHorasParaModal] = useState(0);
+    const [horasParaModal,          setHorasParaModal]          = useState(0);
+
+    const [modalManual, setModalManual] = useState(false);
 
     const timerRef         = useRef<ReturnType<typeof setInterval> | null>(null);
     const alertaLanzadaRef = useRef(false);
     const congeladoRef     = useRef(false);
     const generadorRef     = useRef<Generador | null>(null);
+
+    // ── Permisos derivados del rol ────────────────────────────────────────────
+    const esAdmin            = usuario?.isAdmin;
+    const rol                = usuario?.rol;
+    const puedeAbastecer     = esAdmin || rol === 'tecnico_abastecimiento';
+    const puedeManejarRemoto = esAdmin || rol === 'supervisor';
 
     useEffect(() => {
         generadorRef.current = generador;
@@ -230,7 +239,7 @@ export default function GeneradorDetalle() {
         );
     };
 
-    const handleRegistrarAceite = async (data: { notas: string; imagenUrl?: string }) => {
+    const handleRegistrarAceite = async (data: { notas: string; imagenesUrl: string[]; checklistItems: any[] }) => {
         if (!generador) return;
         const res = await fetchConAuth(`${API_URL}/api/mantenimientos`, {
             method: 'POST',
@@ -238,8 +247,9 @@ export default function GeneradorDetalle() {
                 idGenerador:    generador.idGenerador,
                 tipo:           'aceite',
                 horasAlMomento: getSegundosReales(),
-                imagenUrl:      data.imagenUrl,
+                imagenesUrl:    data.imagenesUrl,
                 notas:          data.notas,
+                checklistItems: data.checklistItems,
             }),
         });
         const json = await res.json();
@@ -249,7 +259,7 @@ export default function GeneradorDetalle() {
         Alert.alert('Listo', 'Cambio de aceite registrado');
     };
 
-    const handleRegistrarGasolina = async (data: { litros: number; notas: string; imagenUrl?: string }) => {
+    const handleRegistrarGasolina = async (data: { litros: number; imagenesUrl: string[]; notas: string; checklistItems: any[] }) => {
         if (!generador) return;
         const res = await fetchConAuth(`${API_URL}/api/mantenimientos`, {
             method: 'POST',
@@ -259,8 +269,9 @@ export default function GeneradorDetalle() {
                 horasAlMomento:          getSegundosReales(),
                 gasolinaLitrosAlMomento: gasolinaActual,
                 cantidadLitros:          data.litros,
-                imagenUrl:               data.imagenUrl,
+                imagenesUrl:             data.imagenesUrl,
                 notas:                   data.notas,
+                checklistItems:          data.checklistItems,
             }),
         });
         const json = await res.json();
@@ -300,6 +311,7 @@ export default function GeneradorDetalle() {
     const nivelMedio     = gasolinaPct >= 25 && gasolinaPct < 60;
     const sinGasolina    = gasolinaActual <= 0;
 
+    // ── Colores dinámicos ─────────────────────────────────────────────────────
     const estadoColor       = corriendo ? '#00e5a0' : '#c8e06a';
     const estadoBorderColor = corriendo ? 'rgba(0,229,160,0.3)'  : 'rgba(200,224,106,0.25)';
     const estadoBadgeBg     = corriendo ? 'rgba(0,229,160,0.1)'  : 'rgba(200,224,106,0.1)';
@@ -314,12 +326,28 @@ export default function GeneradorDetalle() {
         ? ['rgba(0,229,160,0.18)', 'rgba(0,229,160,0.06)']
         : ['rgba(200,224,106,0.15)', 'rgba(200,224,106,0.05)'];
 
+    // ── Colores para estado bloqueado por permiso (igual que sin gasolina) ────
+    const bloqueadoColors: [string, string] = ['rgba(80,80,80,0.18)', 'rgba(80,80,80,0.06)'];
+    const bloqueadoBorder  = 'rgba(120,120,120,0.25)';
+    const bloqueadoColor   = '#555';
+
+    // Toggle: deshabilitado si sin gasolina+apagado O si no tiene permiso remoto
+    const toggleBloqueadoSinGasolina = sinGasolina && !corriendo;
+    const toggleDeshabilitado        = accionando || toggleBloqueadoSinGasolina || !puedeManejarRemoto;
+    const toggleColors: [string, string] = !puedeManejarRemoto
+        ? ['#444', '#333']
+        : toggleBloqueadoSinGasolina
+            ? ['#444', '#333']
+            : corriendo
+                ? ['#ff4757', '#cc2233']
+                : ['#00e5a0', '#00b87a'];
+
     return (
         <View style={styles.container}>
             <ImageBackground source={require('@/assets/images/bg-login.png')} style={StyleSheet.absoluteFill} resizeMode="cover" />
             <View style={styles.overlay} />
 
-            {/* ── Header con icono calendario ── */}
+            {/* ── Header ── */}
             <View style={styles.header}>
                 <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
                     <Ionicons name="arrow-back" size={20} color={COLORS.textPrimary} />
@@ -328,14 +356,30 @@ export default function GeneradorDetalle() {
                     <Text style={styles.headerTitle}>{generador.genId}</Text>
                     <Text style={styles.headerSub}>{generador.marca}</Text>
                 </View>
-                {/* ← icono calendario */}
+
+                {/* Botón calendario: visible siempre, gris si no tiene permiso */}
                 <TouchableOpacity
-                    style={styles.calendarBtn}
-                    onPress={() => setModalCalendario(true)}
-                    activeOpacity={0.8}
+                    style={[
+                        styles.calendarBtn,
+                        !puedeManejarRemoto && styles.calendarBtnBloqueado,
+                    ]}
+                    onPress={() => puedeManejarRemoto && setModalCalendario(true)}
+                    activeOpacity={puedeManejarRemoto ? 0.8 : 1}
                 >
-                    <Ionicons name="calendar-outline" size={20} color="#A78BFA" />
+                    <Ionicons
+                        name="calendar-outline"
+                        size={20}
+                        color={puedeManejarRemoto ? '#A78BFA' : bloqueadoColor}
+                    />
                 </TouchableOpacity>
+
+                <TouchableOpacity
+                    style={styles.manualBtn}
+                    onPress={() => setModalManual(true)}
+                >
+                    <Ionicons name="book-outline" size={20} color="#7C9EF8" />
+                </TouchableOpacity>
+
             </View>
 
             <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
@@ -383,23 +427,46 @@ export default function GeneradorDetalle() {
                     ))}
                 </View>
 
+                {/* ── Botón encender/apagar — siempre visible, gris si sin permiso ── */}
                 <TouchableOpacity
-                    style={[styles.toggleBtn, sinGasolina && !corriendo && styles.toggleBtnDisabled]}
+                    style={[
+                        styles.toggleBtn,
+                        (toggleBloqueadoSinGasolina || !puedeManejarRemoto) && styles.toggleBtnDisabled,
+                    ]}
                     onPress={handleToggle}
-                    disabled={accionando || (sinGasolina && !corriendo)}
+                    disabled={toggleDeshabilitado}
                     activeOpacity={0.85}
                 >
                     <LinearGradient
-                        colors={sinGasolina && !corriendo ? ['#444', '#333'] : corriendo ? ['#ff4757', '#cc2233'] : ['#00e5a0', '#00b87a']}
+                        colors={toggleColors}
                         start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
                         style={styles.toggleGradient}
                     >
                         {accionando
                             ? <ActivityIndicator color="#fff" />
                             : <>
-                                <Ionicons name={sinGasolina && !corriendo ? 'ban-outline' : corriendo ? 'stop-outline' : 'play-outline'} size={20} color="#fff" />
+                                <Ionicons
+                                    name={
+                                        !puedeManejarRemoto
+                                            ? 'lock-closed-outline'
+                                            : toggleBloqueadoSinGasolina
+                                                ? 'ban-outline'
+                                                : corriendo
+                                                    ? 'stop-outline'
+                                                    : 'play-outline'
+                                    }
+                                    size={20}
+                                    color="#fff"
+                                />
                                 <Text style={styles.toggleText}>
-                                    {sinGasolina && !corriendo ? 'Sin gasolina — no disponible' : corriendo ? 'Parar generador' : 'Iniciar generador'}
+                                    {!puedeManejarRemoto
+                                        ? 'Sin permiso'
+                                        : toggleBloqueadoSinGasolina
+                                            ? 'Sin gasolina — no disponible'
+                                            : corriendo
+                                                ? 'Parar generador'
+                                                : 'Iniciar generador'
+                                    }
                                 </Text>
                               </>
                         }
@@ -432,29 +499,75 @@ export default function GeneradorDetalle() {
                     </View>
 
                     <View style={styles.acciones}>
+
+                        {/* Cambio de aceite — gris si no puede abastecer */}
                         <TouchableOpacity
-                            style={[styles.accionBtn, { borderColor: accionBorder }]}
+                            style={[
+                                styles.accionBtn,
+                                { borderColor: puedeAbastecer ? accionBorder : bloqueadoBorder },
+                            ]}
                             onPress={() => {
+                                if (!puedeAbastecer) return;
                                 setHorasParaModal(segundosTotalesActuales);
                                 setModalAceite(true);
                             }}
-                            activeOpacity={0.8}
+                            activeOpacity={puedeAbastecer ? 0.8 : 1}
                         >
-                            <LinearGradient colors={accionColors} style={styles.accionGradient}>
-                                <Ionicons name="water-outline" size={18} color={accionColor} />
-                                <Text style={[styles.accionText, { color: accionColor }]}>Cambio de aceite</Text>
-                            </LinearGradient>
-                        </TouchableOpacity>
-
-                        <TouchableOpacity style={[styles.accionBtn, { borderColor: sinGasolina ? 'rgba(255,71,87,0.5)' : accionBorder }]} onPress={() => setModalGasolina(true)} activeOpacity={0.8}>
-                            <LinearGradient colors={sinGasolina ? ['rgba(255,71,87,0.2)', 'rgba(255,71,87,0.08)'] : accionColors} style={styles.accionGradient}>
-                                <Ionicons name="flash-outline" size={18} color={sinGasolina ? '#ff4757' : accionColor} />
-                                <Text style={[styles.accionText, { color: sinGasolina ? '#ff4757' : accionColor }]}>
-                                    {sinGasolina ? '¡Llenar gasolina!' : 'Llenar gasolina'}
+                            <LinearGradient
+                                colors={puedeAbastecer ? accionColors : bloqueadoColors}
+                                style={styles.accionGradient}
+                            >
+                                <Ionicons
+                                    name={puedeAbastecer ? 'water-outline' : 'lock-closed-outline'}
+                                    size={18}
+                                    color={puedeAbastecer ? accionColor : bloqueadoColor}
+                                />
+                                <Text style={[styles.accionText, { color: puedeAbastecer ? accionColor : bloqueadoColor }]}>
+                                    Cambio de aceite
                                 </Text>
                             </LinearGradient>
                         </TouchableOpacity>
 
+                        {/* Llenar gasolina — gris si no puede abastecer */}
+                        <TouchableOpacity
+                            style={[
+                                styles.accionBtn,
+                                {
+                                    borderColor: !puedeAbastecer
+                                        ? bloqueadoBorder
+                                        : sinGasolina
+                                            ? 'rgba(255,71,87,0.5)'
+                                            : accionBorder,
+                                },
+                            ]}
+                            onPress={() => puedeAbastecer && setModalGasolina(true)}
+                            activeOpacity={puedeAbastecer ? 0.8 : 1}
+                        >
+                            <LinearGradient
+                                colors={
+                                    !puedeAbastecer
+                                        ? bloqueadoColors
+                                        : sinGasolina
+                                            ? ['rgba(255,71,87,0.2)', 'rgba(255,71,87,0.08)']
+                                            : accionColors
+                                }
+                                style={styles.accionGradient}
+                            >
+                                <Ionicons
+                                    name={!puedeAbastecer ? 'lock-closed-outline' : 'flash-outline'}
+                                    size={18}
+                                    color={!puedeAbastecer ? bloqueadoColor : sinGasolina ? '#ff4757' : accionColor}
+                                />
+                                <Text style={[
+                                    styles.accionText,
+                                    { color: !puedeAbastecer ? bloqueadoColor : sinGasolina ? '#ff4757' : accionColor },
+                                ]}>
+                                    {!puedeAbastecer ? 'Llenar gasolina' : sinGasolina ? '¡Llenar gasolina!' : 'Llenar gasolina'}
+                                </Text>
+                            </LinearGradient>
+                        </TouchableOpacity>
+
+                        {/* Reporte — todos los roles */}
                         <TouchableOpacity
                             style={[styles.accionBtn, { borderColor: accionBorder }]}
                             onPress={() => router.push(`/generador/reporte/${generador.idGenerador}?genId=${generador.genId}` as any)}
@@ -465,6 +578,7 @@ export default function GeneradorDetalle() {
                                 <Text style={[styles.accionText, { color: accionColor }]}>Reporte</Text>
                             </LinearGradient>
                         </TouchableOpacity>
+
                     </View>
                 </View>
 
@@ -481,8 +595,16 @@ export default function GeneradorDetalle() {
                         <Text style={styles.alertMsg}>
                             El generador {generador.genId} se ha quedado sin gasolina. Es necesario recargar antes de continuar operando.
                         </Text>
-                        <TouchableOpacity style={styles.alertBtn} onPress={() => { setAlertaGasolina(false); setModalGasolina(true); }}>
-                            <Text style={styles.alertBtnText}>Llenar gasolina ahora</Text>
+                        <TouchableOpacity
+                            style={styles.alertBtn}
+                            onPress={() => {
+                                setAlertaGasolina(false);
+                                if (puedeAbastecer) setModalGasolina(true);
+                            }}
+                        >
+                            <Text style={styles.alertBtnText}>
+                                {puedeAbastecer ? 'Llenar gasolina ahora' : 'Entendido'}
+                            </Text>
                         </TouchableOpacity>
                         <TouchableOpacity style={styles.alertBtnSecondary} onPress={() => setAlertaGasolina(false)}>
                             <Text style={styles.alertBtnSecondaryText}>Cerrar</Text>
@@ -491,83 +613,104 @@ export default function GeneradorDetalle() {
                 </View>
             )}
 
-            <ModalCambioAceite
-                visible={modalAceite}
-                horasTotales={horasParaModal}
-                onClose={() => setModalAceite(false)}
-                onConfirmar={handleRegistrarAceite}
-                fetchConAuth={fetchConAuth}
-            />
-            <ModalLlenarGasolina
-                visible={modalGasolina}
-                horasTotales={segundosTotalesActuales}
-                gasolinaActual={gasolinaActual}
-                capacidad={capacidad}
-                onClose={() => setModalGasolina(false)}
-                onConfirmar={handleRegistrarGasolina}
-                fetchConAuth={fetchConAuth}
-            />
-            <ModalCalendarioAgendados
-                visible={modalCalendario}
-                onClose={() => setModalCalendario(false)}
+            {/* Modales — solo se montan si tiene permiso */}
+            {puedeAbastecer && (
+                <ModalCambioAceite
+                    visible={modalAceite}
+                    horasTotales={horasParaModal}
+                    onClose={() => setModalAceite(false)}
+                    onConfirmar={handleRegistrarAceite}
+                    fetchConAuth={fetchConAuth}
+                />
+            )}
+            {puedeAbastecer && (
+                <ModalLlenarGasolina
+                    visible={modalGasolina}
+                    horasTotales={segundosTotalesActuales}
+                    gasolinaActual={gasolinaActual}
+                    capacidad={capacidad}
+                    onClose={() => setModalGasolina(false)}
+                    onConfirmar={handleRegistrarGasolina}
+                    fetchConAuth={fetchConAuth}
+                />
+            )}
+            {puedeManejarRemoto && (
+                <ModalCalendarioAgendados
+                    visible={modalCalendario}
+                    onClose={() => setModalCalendario(false)}
+                    idGenerador={generador.idGenerador}
+                    genId={generador.genId}
+                />
+            )}
+
+            <ModalManualGenerador
+                visible={modalManual}
+                onClose={() => setModalManual(false)}
                 idGenerador={generador.idGenerador}
                 genId={generador.genId}
+                fetchConAuth={fetchConAuth}
             />
         </View>
     );
 }
 
 const styles = StyleSheet.create({
-    container:         { flex: 1, backgroundColor: COLORS.background },
-    overlay:           { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,5,20,0.55)' },
-    fullCenter:        { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.background },
-    header:            { flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 20, paddingTop: 60, paddingBottom: 16 },
-    backBtn:           { width: 40, height: 40, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.07)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
-    headerTitle:       { fontSize: 18, fontWeight: '800', color: COLORS.textPrimary },
-    headerSub:         { fontSize: 12, color: COLORS.textMuted },
-    // ← nuevo botón calendario en header
-    calendarBtn:       { width: 40, height: 40, borderRadius: 12, backgroundColor: 'rgba(167,139,250,0.1)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(167,139,250,0.25)' },
-    scroll:            { paddingHorizontal: 20 },
-    statusCard:        { backgroundColor: 'rgba(8,15,40,0.75)', borderRadius: 20, padding: 20, borderWidth: 1, marginBottom: 14 },
-    statusRow:         { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
-    statusLeft:        { flexDirection: 'row', alignItems: 'center', gap: 8 },
-    dot:               { width: 8, height: 8, borderRadius: 4, shadowOpacity: 0.9, shadowRadius: 5, elevation: 4 },
-    statusText:        { fontSize: 13, fontWeight: '600' },
-    badge:             { flexDirection: 'row', alignItems: 'center', gap: 4, borderRadius: 20, paddingHorizontal: 10, paddingVertical: 4, borderWidth: 1 },
-    badgeText:         { fontSize: 10, fontWeight: '600' },
-    horasGrandes:      { fontSize: 36, fontWeight: '800', color: COLORS.textPrimary, letterSpacing: 1 },
-    horasSub:          { fontSize: 12, color: COLORS.textMuted, marginTop: 4 },
-    grid:              { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 14 },
-    gridItem:          { width: '48%', backgroundColor: 'rgba(8,15,40,0.85)', borderRadius: 14, padding: 14, borderWidth: 1, borderColor: 'rgba(21,96,218,0.76)', gap: 4 },
-    gridLabel:         { fontSize: 10, color: COLORS.textMuted, marginTop: 2 },
-    gridValue:         { fontSize: 13, fontWeight: '700' },
-    toggleBtn:         { borderRadius: 16, marginBottom: 16, overflow: 'hidden', shadowOpacity: 0.3, shadowRadius: 12, elevation: 6 },
-    toggleBtnDisabled: { opacity: 0.7 },
-    toggleGradient:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, paddingVertical: 18 },
-    toggleText:        { color: '#fff', fontSize: 16, fontWeight: '700' },
-    bottomRow:         { flexDirection: 'row', gap: 12, alignItems: 'flex-start' },
-    gasolinaCard:      { backgroundColor: 'rgba(8,15,40,0.75)', borderRadius: 16, padding: 16, alignItems: 'center', borderWidth: 1, borderColor: 'rgba(100,160,255,0.12)', width: 120 },
-    gasolinaTitle:     { fontSize: 12, color: COLORS.textSecondary, marginBottom: 12, fontWeight: '600', letterSpacing: 0.5 },
-    tankWrapper:       { shadowOpacity: 0.5, shadowRadius: 16, shadowOffset: { width: 0, height: 4 }, elevation: 8, marginBottom: 10 },
-    tankOuter:         { width: 76, height: 110, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.03)', borderWidth: 1.5, padding: 4 },
-    tankInner:         { flex: 1, borderRadius: 16, backgroundColor: 'rgba(0,0,0,0.35)', overflow: 'hidden', alignItems: 'center', justifyContent: 'center', position: 'relative' },
-    tankFill:          { position: 'absolute', bottom: 0, left: 0, right: 0, overflow: 'hidden', borderRadius: 12 },
-    tankPct:           { fontSize: 20, fontWeight: '800', color: '#fff', zIndex: 1 },
-    tankSym:           { fontSize: 10, color: 'rgba(255,255,255,0.7)', zIndex: 1, marginTop: -2 },
-    tankLitros:        { fontSize: 12, fontWeight: '700', marginBottom: 4 },
-    criticoRow:        { flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 2 },
-    criticoText:       { fontSize: 9, color: '#ff4757' },
-    acciones:          { flex: 1, gap: 10 },
-    accionBtn:         { borderRadius: 14, overflow: 'hidden', borderWidth: 1 },
-    accionGradient:    { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, paddingVertical: 16 },
-    accionText:        { fontSize: 13, fontWeight: '600' },
-    alertOverlay:      { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.75)', alignItems: 'center', justifyContent: 'center', zIndex: 100, paddingHorizontal: 28 },
-    alertBox:          { backgroundColor: 'rgba(15,10,20,0.98)', borderRadius: 24, padding: 28, alignItems: 'center', borderWidth: 1.5, borderColor: 'rgba(255,71,87,0.5)', width: '100%', shadowColor: '#ff4757', shadowOpacity: 0.4, shadowRadius: 30, shadowOffset: { width: 0, height: 0 }, elevation: 20 },
-    alertIconBox:      { width: 72, height: 72, borderRadius: 36, backgroundColor: 'rgba(255,71,87,0.12)', borderWidth: 1.5, borderColor: 'rgba(255,71,87,0.4)', alignItems: 'center', justifyContent: 'center', marginBottom: 16 },
-    alertTitle:        { fontSize: 22, fontWeight: '800', color: '#ff4757', marginBottom: 10, letterSpacing: 0.3 },
-    alertMsg:          { fontSize: 14, color: COLORS.textSecondary, textAlign: 'center', lineHeight: 22, marginBottom: 24 },
-    alertBtn:          { backgroundColor: '#ff4757', paddingVertical: 15, borderRadius: 12, alignItems: 'center', width: '100%', marginBottom: 10, shadowColor: '#ff4757', shadowOpacity: 0.5, shadowRadius: 14, shadowOffset: { width: 0, height: 4 }, elevation: 8 },
-    alertBtnText:      { color: '#fff', fontWeight: '700', fontSize: 16 },
-    alertBtnSecondary: { paddingVertical: 12, borderRadius: 12, alignItems: 'center', width: '100%', borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)' },
-    alertBtnSecondaryText: { color: COLORS.textSecondary, fontWeight: '600', fontSize: 14 },
+    container:            { flex: 1, backgroundColor: COLORS.background },
+    overlay:              { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,5,20,0.55)' },
+    fullCenter:           { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.background },
+    header:               { flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 20, paddingTop: 60, paddingBottom: 16 },
+    backBtn:              { width: 40, height: 40, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.07)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
+    headerTitle:          { fontSize: 18, fontWeight: '800', color: COLORS.textPrimary },
+    headerSub:            { fontSize: 12, color: COLORS.textMuted },
+    calendarBtn:          { width: 40, height: 40, borderRadius: 12, backgroundColor: 'rgba(167,139,250,0.1)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(167,139,250,0.25)' },
+    calendarBtnBloqueado: { backgroundColor: 'rgba(80,80,80,0.08)', borderColor: 'rgba(120,120,120,0.2)' },
+    scroll:               { paddingHorizontal: 20 },
+    statusCard:           { backgroundColor: 'rgba(8,15,40,0.75)', borderRadius: 20, padding: 20, borderWidth: 1, marginBottom: 14 },
+    statusRow:            { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
+    statusLeft:           { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    dot:                  { width: 8, height: 8, borderRadius: 4, shadowOpacity: 0.9, shadowRadius: 5, elevation: 4 },
+    statusText:           { fontSize: 13, fontWeight: '600' },
+    badge:                { flexDirection: 'row', alignItems: 'center', gap: 4, borderRadius: 20, paddingHorizontal: 10, paddingVertical: 4, borderWidth: 1 },
+    badgeText:            { fontSize: 10, fontWeight: '600' },
+    horasGrandes:         { fontSize: 36, fontWeight: '800', color: COLORS.textPrimary, letterSpacing: 1 },
+    horasSub:             { fontSize: 12, color: COLORS.textMuted, marginTop: 4 },
+    grid:                 { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 14 },
+    gridItem:             { width: '48%', backgroundColor: 'rgba(8,15,40,0.85)', borderRadius: 14, padding: 14, borderWidth: 1, borderColor: 'rgba(21,96,218,0.76)', gap: 4 },
+    gridLabel:            { fontSize: 10, color: COLORS.textMuted, marginTop: 2 },
+    gridValue:            { fontSize: 13, fontWeight: '700' },
+    toggleBtn:            { borderRadius: 16, marginBottom: 16, overflow: 'hidden', shadowOpacity: 0.3, shadowRadius: 12, elevation: 6 },
+    toggleBtnDisabled:    { opacity: 0.7 },
+    toggleGradient:       { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, paddingVertical: 18 },
+    toggleText:           { color: '#fff', fontSize: 16, fontWeight: '700' },
+    bottomRow:            { flexDirection: 'row', gap: 12, alignItems: 'flex-start' },
+    gasolinaCard:         { backgroundColor: 'rgba(8,15,40,0.75)', borderRadius: 16, padding: 16, alignItems: 'center', borderWidth: 1, borderColor: 'rgba(100,160,255,0.12)', width: 120 },
+    gasolinaTitle:        { fontSize: 12, color: COLORS.textSecondary, marginBottom: 12, fontWeight: '600', letterSpacing: 0.5 },
+    tankWrapper:          { shadowOpacity: 0.5, shadowRadius: 16, shadowOffset: { width: 0, height: 4 }, elevation: 8, marginBottom: 10 },
+    tankOuter:            { width: 76, height: 110, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.03)', borderWidth: 1.5, padding: 4 },
+    tankInner:            { flex: 1, borderRadius: 16, backgroundColor: 'rgba(0,0,0,0.35)', overflow: 'hidden', alignItems: 'center', justifyContent: 'center', position: 'relative' },
+    tankFill:             { position: 'absolute', bottom: 0, left: 0, right: 0, overflow: 'hidden', borderRadius: 12 },
+    tankPct:              { fontSize: 20, fontWeight: '800', color: '#fff', zIndex: 1 },
+    tankSym:              { fontSize: 10, color: 'rgba(255,255,255,0.7)', zIndex: 1, marginTop: -2 },
+    tankLitros:           { fontSize: 12, fontWeight: '700', marginBottom: 4 },
+    criticoRow:           { flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 2 },
+    criticoText:          { fontSize: 9, color: '#ff4757' },
+    acciones:             { flex: 1, gap: 10 },
+    accionBtn:            { borderRadius: 14, overflow: 'hidden', borderWidth: 1 },
+    accionGradient:       { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, paddingVertical: 16 },
+    accionText:           { fontSize: 13, fontWeight: '600' },
+    alertOverlay:         { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.75)', alignItems: 'center', justifyContent: 'center', zIndex: 100, paddingHorizontal: 28 },
+    alertBox:             { backgroundColor: 'rgba(15,10,20,0.98)', borderRadius: 24, padding: 28, alignItems: 'center', borderWidth: 1.5, borderColor: 'rgba(255,71,87,0.5)', width: '100%', shadowColor: '#ff4757', shadowOpacity: 0.4, shadowRadius: 30, shadowOffset: { width: 0, height: 0 }, elevation: 20 },
+    alertIconBox:         { width: 72, height: 72, borderRadius: 36, backgroundColor: 'rgba(255,71,87,0.12)', borderWidth: 1.5, borderColor: 'rgba(255,71,87,0.4)', alignItems: 'center', justifyContent: 'center', marginBottom: 16 },
+    alertTitle:           { fontSize: 22, fontWeight: '800', color: '#ff4757', marginBottom: 10, letterSpacing: 0.3 },
+    alertMsg:             { fontSize: 14, color: COLORS.textSecondary, textAlign: 'center', lineHeight: 22, marginBottom: 24 },
+    alertBtn:             { backgroundColor: '#ff4757', paddingVertical: 15, borderRadius: 12, alignItems: 'center', width: '100%', marginBottom: 10, shadowColor: '#ff4757', shadowOpacity: 0.5, shadowRadius: 14, shadowOffset: { width: 0, height: 4 }, elevation: 8 },
+    alertBtnText:         { color: '#fff', fontWeight: '700', fontSize: 16 },
+    alertBtnSecondary:    { paddingVertical: 12, borderRadius: 12, alignItems: 'center', width: '100%', borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)' },
+    alertBtnSecondaryText:{ color: COLORS.textSecondary, fontWeight: '600', fontSize: 14 },
+    manualBtn: {
+        width: 40, height: 40, borderRadius: 12,
+        backgroundColor: 'rgba(124,158,248,0.1)',
+        alignItems: 'center', justifyContent: 'center',
+        borderWidth: 1, borderColor: 'rgba(124,158,248,0.25)'
+    },
 });

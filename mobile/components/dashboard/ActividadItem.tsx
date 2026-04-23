@@ -1,6 +1,7 @@
 import { View, Text, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS } from '@/assets/styles/colors';
+import Mantenimientos from '../mantenimientos/Mantenimientos';
 
 interface ActividadItemProps {
     genId:      string;
@@ -10,13 +11,21 @@ interface ActividadItemProps {
 }
 
 const eventoConfig: Record<string, { label: string; icon: string; color: string }> = {
-    generador_encendido:  { label: 'Iniciado',          icon: 'flash',            color: '#00e5a0' },
-    generador_apagado:    { label: 'Apagado',           icon: 'power',            color: COLORS.textMuted },
-    cambio_aceite:        { label: 'Cambio de aceite',  icon: 'construct-outline', color: '#c8e06a' },
-    recarga_gasolina:     { label: 'Recarga gasolina',  icon: 'water-outline',    color: '#00bcd4' },
-    generador_creado:     { label: 'Registrado',        icon: 'add-circle-outline', color: COLORS.primary },
-    reporte_generado:     { label: 'Reporte generado',  icon: 'document-outline', color: '#c084fc' },
-    mantenimiento_eliminado: { label: 'Mant. eliminado', icon: 'trash-outline',   color: '#ff4757' },
+    generador_creado:                  { label: 'Registrado',      icon: 'add-circle-outline',       color: COLORS.primary },
+    generador_encendido:               { label: 'Iniciado',        icon: 'flash',                    color: '#00e5a0' },
+    generador_apagado:                 { label: 'Apagado',         icon: 'power',                    color: COLORS.textMuted },
+    generador_actualizado:             { label: 'Actualizado',     icon: 'pencil-outline',           color: '#60a5fa' },
+    generador_eliminado:               { label: 'Eliminado',       icon: 'trash-outline',            color: '#ff4757' },
+    encendido_semanal:                 { label: 'Enc. semanal',    icon: 'calendar-outline',         color: '#f59e0b' },
+    cambio_aceite:                     { label: 'Cambio aceite',   icon: 'construct-outline',        color: '#c8e06a' },
+    recarga_gasolina:                  { label: 'Recarga gasolina',icon: 'water-outline',            color: '#00bcd4' },
+    reporte_generado:                  { label: 'Reporte',         icon: 'document-outline',         color: '#c084fc' },
+    mantenimiento_eliminado:           { label: 'Mant. eliminado', icon: 'trash-outline',            color: '#ff4757' },
+    mantenimiento_bateria:             { label: 'Batería',         icon: 'battery-charging-outline', color: '#34d399' },
+    mantenimiento_filtro_aire:         { label: 'Filtro aire',     icon: 'cloud-outline',            color: '#7dd3fc' },
+    mantenimiento_filtro_aceite:       { label: 'Filtro aceite',   icon: 'funnel-outline',           color: '#fbbf24' },
+    mantenimiento_filtro_combustible:  { label: 'Filtro comb.',    icon: 'filter-outline',           color: '#fb923c' },
+    mantenimiento_bujias:              { label: 'Bujías',          icon: 'flash-outline',            color: '#e879f9' },
 };
 
 const formatFecha = (timestamp: string) => {
