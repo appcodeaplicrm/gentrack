@@ -124,11 +124,13 @@ router.get('/historial', verificarToken, soloSupervisor, async (req, res) => {
                 realizadoEn:     schema.mantenimientos.realizadoEn,
                 notas:           schema.mantenimientos.notas,
                 imagenesUrl:     schema.mantenimientos.imagenesUrl,
+                checklistItems:  schema.mantenimientos.checklistItems,
                 horasAlMomento:  schema.mantenimientos.horasAlMomento,
                 genId:           schema.generadores.genId,
                 nombreNodo:      schema.nodos.nombre,
                 tecnico:         schema.usuarios.nombre,
                 ubicacion:       schema.nodos.ubicacion,
+                checklistItems:  schema.mantenimientos.checklistItems,
             })
             .from(schema.mantenimientos)
             .innerJoin(schema.generadores, eq(schema.mantenimientos.idGenerador, schema.generadores.idGenerador))
@@ -314,10 +316,12 @@ router.post('/pendientes/:idPendiente/renotificar', verificarToken, soloSupervis
 
         // Envía la push directamente
         await notificar(NOTIF.MANTENIMIENTO_PENDIENTE, {
-            idGenerador: pendiente.idGenerador,
-            genId:       pendiente.genId,
-            nodo:        pendiente.nombreNodo,
-            tipo:        pendiente.tipo,
+            idGenerador:  pendiente.idGenerador,
+            genId:        pendiente.genId,
+            nodo:         pendiente.nombreNodo,
+            tipo:         pendiente.tipo,
+            prioridad:    pendiente.prioridad,
+            grupoDestino: pendiente.grupoDestino,
         });
 
         res.status(200).json({ success: true, data: pendiente });

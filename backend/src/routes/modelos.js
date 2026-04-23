@@ -4,10 +4,17 @@ import * as schema from '../db/schema.js';
 import { eq } from 'drizzle-orm';
 import { verificarToken } from '../middleware/auth.js';
 
+const soloAdmin = (req, res, next) => {
+    if (!req.usuario?.isAdmin) {
+        return res.status(403).json({ success: false, error: 'Acceso denegado — solo administradores' });
+    }
+    next();
+};
+
 const router = Router();
 
 /* GET /api/modelos */
-router.get('/', verificarToken, async (req, res) => {
+router.get('/', verificarToken,  async (req, res) => {
     try {
         const data = await db.select().from(schema.generadoresModelos);
         res.status(200).json({ success: true, data });
@@ -31,7 +38,7 @@ router.get('/:id', verificarToken, async (req, res) => {
 });
 
 /* POST /api/modelos*/
-router.post('/', verificarToken, async (req, res) => {
+router.post('/', verificarToken, soloAdmin, async (req, res) => {
     try {
         const {
             nombre, marca, capacidadGasolina, consumoGasolinaHoras,
@@ -63,7 +70,7 @@ router.post('/', verificarToken, async (req, res) => {
 });
 
 /* PUT /api/modelos/:id */
-router.put('/:id', verificarToken, async (req, res) => {
+router.put('/:id', verificarToken, soloAdmin, async (req, res) => {
     try {
         const {
             nombre, marca, capacidadGasolina, consumoGasolinaHoras,
@@ -92,7 +99,7 @@ router.put('/:id', verificarToken, async (req, res) => {
 });
 
 /* DELETE /api/modelos/:id  */
-router.delete('/:id', verificarToken, async (req, res) => {
+router.delete('/:id', verificarToken, soloAdmin, async (req, res) => {
     try {
         const data = await db.delete(schema.generadoresModelos)
             .where(eq(schema.generadoresModelos.idModelo, parseInt(req.params.id)))

@@ -154,6 +154,7 @@ async function verificarMantenimientoPorHoras(gen, horasActuales, tipo, interval
             titulo,
             mensaje,
             prioridad,
+            grupoDestino,
         });
         await marcarNotificado(pendiente.idPendiente);
     }
@@ -195,6 +196,7 @@ async function verificarBateria(gen) {
                 ? `${gen.genId}: limpieza de batería VENCIDA`
                 : `${gen.genId}: limpieza de batería en ${diasFaltan} día(s)`,
             prioridad,
+            grupoDestino: 'tecnico_mantenimiento',
         });
         await marcarNotificado(pendiente.idPendiente);
     }
@@ -239,6 +241,7 @@ async function verificarEncendidoSemanal(gen) {
                 ? `${gen.genId}: no ha sido encendido en los últimos 7 días`
                 : `${gen.genId}: debe encenderse en los próximos ${diasFaltan} día(s)`,
             prioridad:   'alta',
+            grupoDestino: 'tecnico_mantenimiento',
         });
         await marcarNotificado(pendiente.idPendiente);
     }
@@ -280,6 +283,7 @@ async function verificarGasolina(gen, horasSesion) {
                 ? `${gen.genId}: combustible CRÍTICO al ${Math.round(porcentaje * 100)}% (${litrosReales.toFixed(1)}L)`
                 : `${gen.genId}: combustible bajo al ${Math.round(porcentaje * 100)}% (${litrosReales.toFixed(1)}L)`,
             prioridad,
+            grupoDestino: 'tecnico_mantenimiento',
         });
         await marcarNotificado(pendiente.idPendiente);
     }

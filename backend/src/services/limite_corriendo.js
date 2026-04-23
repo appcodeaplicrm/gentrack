@@ -82,7 +82,7 @@ async function verificarCorridaExcesiva() {
             genId:           schema.generadores.genId,
             encendidoEn:     schema.generadores.encendidoEn,
             limiteCorridaEn: schema.generadores.limiteCorridaEn,
-            tuyaDeviceId:    schema.generadores.tuya_device_id,  
+            tuyaDeviceId:    schema.generadores.tuyaDeviceId,  
             nodo:            schema.nodos.nombre,
         })
         .from(schema.generadores)

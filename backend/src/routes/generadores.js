@@ -4,6 +4,13 @@ import * as schema from '../db/schema.js';
 import { verificarToken } from '../middleware/auth.js';
 import { eq, and } from 'drizzle-orm';
 
+const soloAdmin = (req, res, next) => {
+    if (!req.usuario?.isAdmin) {
+        return res.status(403).json({ success: false, error: 'Acceso denegado — solo administradores' });
+    }
+    next();
+};
+
 const router = Router();
 
 const registrarEvento = async ({ idGenerador, idUsuario, idApiKey, tipoEvento, origen, metadata }) => {
@@ -77,6 +84,40 @@ router.get('/corriendo', verificarToken, async (req, res) => {
     }
 });
 
+router.get('/:id/manual', verificarToken, async (req, res) => {
+    try {
+        const data = await db.select({
+            modelo:           schema.generadoresModelos.nombre,
+            info:             schema.generadoresModelos.descripcion,
+            combustible:      schema.generadoresModelos.manualCombustible,
+            corriente:        schema.generadoresModelos.manualCorriente,
+            encendido:        schema.generadoresModelos.manualEncendido,
+            imagenUrl:        schema.generadoresModelos.image_url,
+        })
+        .from(schema.generadores)
+        .innerJoin(schema.generadoresModelos, eq(schema.generadores.idModelo, schema.generadoresModelos.idModelo))
+        .where(eq(schema.generadores.idGenerador, parseInt(req.params.id)));
+
+        if (data.length === 0) return res.json({ success: false, error: 'No encontrado' });
+
+        const d = data[0];
+        return res.json({
+            success: true,
+            data: {
+                modelo:      d.modelo,
+                info:        d.info        ?? '',
+                combustible: d.combustible ?? [],
+                corriente:   d.corriente   ?? [],
+                encendido:   d.encendido   ?? { conEnergia: [], sinEnergia: [] },
+                imagenUrl:   d.imagenUrl ?? null,
+            }
+        });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ success: false, error: 'Error al obtener manual' });
+    }
+});
+
 //Obtener generador por ID
 router.get('/:id', verificarToken, async (req, res) => {
     try {
@@ -111,7 +152,7 @@ router.get('/:id', verificarToken, async (req, res) => {
 });
 
 // Crear generador
-router.post('/', verificarToken, async (req, res) => {
+router.post('/', verificarToken, soloAdmin, async (req, res) => {
     try {
         const { idNodo, idModelo, genId } = req.body;
 
@@ -140,7 +181,7 @@ router.post('/', verificarToken, async (req, res) => {
 });
 
 // Actualizar generador
-router.put('/:id', verificarToken, async (req, res) => {
+router.put('/:id', verificarToken, soloAdmin, async (req, res) => {
     try {
         const { id } = req.params;
         const { ...campos } = req.body;
@@ -175,7 +216,7 @@ router.put('/:id', verificarToken, async (req, res) => {
 });
 
 // Eliminar generador (borrado lógico)
-router.delete('/:id', verificarToken, async (req, res) => {
+router.delete('/:id', verificarToken, soloAdmin, async (req, res) => {
     try {
         const { id } = req.params;
 

@@ -5,6 +5,13 @@ import { eq, notInArray, isNull } from 'drizzle-orm';
 import { verificarToken } from '../middleware/auth.js';
 import crypto from 'crypto';
 
+const soloAdmin = (req, res, next) => {
+    if (!req.usuario?.isAdmin) {
+        return res.status(403).json({ success: false, error: 'Acceso denegado — solo administradores' });
+    }
+    next();
+};
+
 const router = Router();
 
 /* ── GET /api/nodos — todos los nodos activos ── */
@@ -78,7 +85,7 @@ router.get('/:id', verificarToken, async (req, res) => {
 });
 
 /* ── POST /api/nodos ── */
-router.post('/', verificarToken, async (req, res) => {
+router.post('/', verificarToken, soloAdmin, async (req, res) => {
     try {
         const { nombre, ubicacion, descripcion } = req.body;
         if (!nombre || !ubicacion) {
@@ -105,7 +112,7 @@ router.post('/', verificarToken, async (req, res) => {
 });
 
 /* ── PUT /api/nodos/:id ── */
-router.put('/:id', verificarToken, async (req, res) => {
+router.put('/:id', verificarToken, soloAdmin, async (req, res) => {
     try {
         const { nombre, ubicacion, descripcion, activo } = req.body;
         const data = await db.update(schema.nodos)
@@ -121,7 +128,7 @@ router.put('/:id', verificarToken, async (req, res) => {
 });
 
 /* ── DELETE /api/nodos/:id — soft delete ── */
-router.delete('/:id', verificarToken, async (req, res) => {
+router.delete('/:id', verificarToken, soloAdmin, async (req, res) => {
     try {
         const data = await db.update(schema.nodos)
             .set({ activo: false })

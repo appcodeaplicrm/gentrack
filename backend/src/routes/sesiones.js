@@ -7,6 +7,18 @@ import { verificarTokenOApiKey }   from '../middleware/authFlexible.js';
 import { notificar, NOTIF }        from '../services/notificaciones.js';
 import { tuyaEncenderGenerador, tuyaApagarGenerador } from '../services/tuya.js';
 
+const soloSupervisorOAdminSiEsUsuario = (req, res, next) => {
+    // Si viene por apiKey (MikroTik), pasa directo
+    if (req.apiKey) return next();
+    // Si viene por usuario, verificar rol
+    const rol     = req.usuario?.rol;
+    const isAdmin = req.usuario?.isAdmin;
+    if (!isAdmin && rol !== 'supervisor') {
+        return res.status(403).json({ success: false, error: 'Acceso denegado — se requiere supervisor o admin' });
+    }
+    next();
+};
+
 const router = Router();
 
 const registrarEvento = async ({ idGenerador, idUsuario, idApiKey, tipoEvento, origen, metadata }) => {
@@ -21,7 +33,7 @@ const registrarEvento = async ({ idGenerador, idUsuario, idApiKey, tipoEvento, o
 };
 
 // ── ENCENDER ─────────────────────────────────────────────────────────────────
-router.post('/encender', verificarTokenOApiKey, async (req, res) => {
+router.post('/encender', verificarTokenOApiKey, soloSupervisorOAdminSiEsUsuario, async (req, res) => {
     try {
         const { idGenerador, tipoInicio } = req.body;
 
@@ -103,7 +115,7 @@ router.post('/encender', verificarTokenOApiKey, async (req, res) => {
 });
 
 // ── APAGAR ────────────────────────────────────────────────────────────────────
-router.post('/apagar', verificarTokenOApiKey, async (req, res) => {
+router.post('/apagar', verificarTokenOApiKey, soloSupervisorOAdminSiEsUsuario, async (req, res) => {
     try {
         const { idGenerador } = req.body;
 
