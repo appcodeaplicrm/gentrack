@@ -204,6 +204,7 @@ router.patch('/pendientes/:idPendiente/prioridad', verificarToken, soloSuperviso
 });
 
 // ── POST /pendientes/proactivo ────────────────────────────────────────────────
+// ── POST /pendientes/proactivo ────────────────────────────────────────────────
 router.post('/pendientes/proactivo', verificarToken, soloSupervisor, async (req, res) => {
     try {
         const { idGenerador, tipo, prioridad, grupoDestino, notas } = req.body;
@@ -233,9 +234,15 @@ router.post('/pendientes/proactivo', verificarToken, soloSupervisor, async (req,
             });
         }
 
+        // Traer generador + nodo para notificación
         const gen = await db
-            .select({ idGenerador: schema.generadores.idGenerador })
+            .select({
+                idGenerador: schema.generadores.idGenerador,
+                genId:       schema.generadores.genId,
+                nombreNodo:  schema.nodos.nombre,
+            })
             .from(schema.generadores)
+            .innerJoin(schema.nodos, eq(schema.generadores.idNodo, schema.nodos.idNodo))
             .where(and(
                 eq(schema.generadores.idGenerador, parseInt(idGenerador)),
                 eq(schema.generadores.eliminado, false),
@@ -246,6 +253,7 @@ router.post('/pendientes/proactivo', verificarToken, soloSupervisor, async (req,
             return res.status(404).json({ success: false, error: 'Generador no encontrado' });
         }
 
+        // Verificar que no exista ya un pendiente proactivo activo del mismo tipo
         const existente = await db
             .select({ idPendiente: schema.mantenimientosPendientes.idPendiente })
             .from(schema.mantenimientosPendientes)
@@ -253,13 +261,14 @@ router.post('/pendientes/proactivo', verificarToken, soloSupervisor, async (req,
                 eq(schema.mantenimientosPendientes.idGenerador, parseInt(idGenerador)),
                 eq(schema.mantenimientosPendientes.tipo, tipo),
                 eq(schema.mantenimientosPendientes.estado, 'pendiente'),
+                eq(schema.mantenimientosPendientes.esProactivo, true),
             ))
             .limit(1);
 
         if (existente.length > 0) {
             return res.status(409).json({
                 success: false,
-                error: `Ya existe un pendiente activo de tipo "${tipo}" para este generador`,
+                error: `Ya existe un pendiente proactivo activo de tipo "${tipo}" para este generador`,
             });
         }
 
@@ -271,10 +280,26 @@ router.post('/pendientes/proactivo', verificarToken, soloSupervisor, async (req,
                 prioridad,
                 estado:       'pendiente',
                 grupoDestino,
-                notificado:   false,
+                notificado:   true,
+                esProactivo:  true,
                 metadatos:    notas ? { notas } : null,
             })
             .returning();
+
+        // Notificar al grupo correspondiente
+        try {
+            await notificar(NOTIF.MANTENIMIENTO_PENDIENTE, {
+                idGenerador: gen[0].idGenerador,
+                genId:       gen[0].genId,
+                nodo:        gen[0].nombreNodo,
+                tipo,
+                prioridad,
+                grupoDestino,
+            });
+        } catch (notifError) {
+            console.error('Error al notificar pendiente proactivo:', notifError);
+            // No falla el request si la notificación falla
+        }
 
         res.status(201).json({ success: true, data: nuevo });
     } catch (error) {

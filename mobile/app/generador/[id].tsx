@@ -306,7 +306,10 @@ export default function GeneradorDetalle() {
     const gasolinaPct    = Math.min((gasolinaActual / capacidad) * 100, 100);
     const horasTotales   = generador.horasTotales / 3600;
     const proximoAceite  = generador.intervaloCambioAceite - (horasTotales % generador.intervaloCambioAceite);
-    const proximaRecarga = gasolinaActual / parseFloat(generador.consumoGasolinaHoras);
+    const mitadCapacidad  = capacidad * 0.5;
+    const proximaRecarga  = gasolinaActual > mitadCapacidad
+        ? (gasolinaActual - mitadCapacidad) / parseFloat(generador.consumoGasolinaHoras)
+        : 0;
     const nivelCritico   = gasolinaPct < 25;
     const nivelMedio     = gasolinaPct >= 25 && gasolinaPct < 60;
     const sinGasolina    = gasolinaActual <= 0;
@@ -417,7 +420,16 @@ export default function GeneradorDetalle() {
                         { icon: 'location-outline',      label: 'Location',         value: generador.nodo,                                                               color: COLORS.primaryBright },
                         { icon: 'hardware-chip-outline', label: 'Modelo',           value: generador.modelo,                                                             color: COLORS.textSecondary },
                         { icon: 'water-outline',         label: 'Cambio de aceite', value: `En ${proximoAceite.toFixed(0)} horas`,                                      color: '#c8e06a' },
-                        { icon: 'flash-outline',         label: 'Próxima recarga',  value: sinGasolina ? 'Recarga necesaria' : `En ${proximaRecarga.toFixed(1)} horas`, color: sinGasolina ? '#ff4757' : COLORS.primaryBright },
+                        { 
+                            icon: 'flash-outline', 
+                            label: 'Próxima recarga', 
+                            value: sinGasolina 
+                                ? 'Recarga necesaria' 
+                                : proximaRecarga <= 0 
+                                    ? '¡Recarga ahora!' 
+                                    : `En ${proximaRecarga.toFixed(1)} horas`, 
+                            color: sinGasolina || proximaRecarga <= 0 ? '#ff4757' : COLORS.primaryBright 
+                        },
                     ].map((item, i) => (
                         <View key={i} style={styles.gridItem}>
                             <Ionicons name={item.icon as any} size={14} color={item.color} />

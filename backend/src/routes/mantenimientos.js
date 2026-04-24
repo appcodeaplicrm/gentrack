@@ -146,6 +146,7 @@ router.get('/proximos', verificarToken, async (req, res) => {
                     progreso:         parseFloat(porcentaje.toFixed(2)),
                     prioridad:        pendienteGas.prioridad,
                     meta:             'Recargar cuando baje del 60%',
+                    esProactivo:        pendienteGas?.esProactivo ?? false,
                     extra: {
                         litrosActuales:       litrosReales,
                         capacidad,
@@ -173,6 +174,7 @@ router.get('/proximos', verificarToken, async (req, res) => {
                     tipo:            'aceite',
                     grupoDestino:    'tecnico_abastecimiento',
                     label:           'Cambio de Aceite',
+                    esProactivo:     pendienteAceite?.esProactivo ?? false,
                     horasActuales,
                     horasFaltantes:  Math.round(horasFaltan * 100) / 100,
                     progreso:        parseFloat(progreso.toFixed(2)),
@@ -204,6 +206,7 @@ router.get('/proximos', verificarToken, async (req, res) => {
                     idMantenimiento: idMantF || `new-${fc.tipo}-${g.idGenerador}`,
                     idPendiente:     pendienteFiltro?.idPendiente || null,
                     tienePendiente:  !!pendienteFiltro,
+                    esProactivo:     pendienteFiltro?.esProactivo ?? false,
                     idGenerador:     g.idGenerador,
                     genId:           g.genId,
                     tipo:            fc.tipo,
@@ -251,6 +254,7 @@ router.get('/proximos', verificarToken, async (req, res) => {
                     horasFaltantes:  diasFaltan,
                     progreso:        parseFloat(progreso.toFixed(2)),
                     prioridad:       pendienteBat.prioridad,
+                    esProactivo:     pendienteBat?.esProactivo ?? false,
                     meta:            'Cada 6 días',
                     extra:           { diasFaltantes: diasFaltan },
                 });
@@ -286,6 +290,7 @@ router.get('/proximos', verificarToken, async (req, res) => {
                     horasFaltantes:  diasFaltan,
                     progreso:        parseFloat(progreso.toFixed(2)),
                     prioridad:       pendienteEnc.prioridad,
+                    esProactivo:     pendienteEnc?.esProactivo ?? false,
                     meta:            'Encender al menos 1h cada 7 días',
                     extra:           { diasFaltantes: diasFaltan, ultimoEncendido: fechaUltima },
                 });
@@ -312,6 +317,7 @@ router.get('/proximos', verificarToken, async (req, res) => {
                     horasFaltantes:  Math.round(horasFaltan * 100) / 100,
                     progreso:        parseFloat(progreso.toFixed(2)),
                     prioridad:       pendienteBuj.prioridad,
+                    esProactivo:     pendienteBuj?.esProactivo ?? false,
                     meta:            'Cada 200h de uso',
                 });
             }

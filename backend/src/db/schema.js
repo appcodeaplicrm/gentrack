@@ -187,6 +187,7 @@
     creadoEn:      timestamp("creado_en").notNull().defaultNow(),
     resueltaEn:    timestamp("resuelta_en"),                        // se llena cuando el técnico hace el mantenimiento
     metadatos:     jsonb("metadatos"),                              // horasFaltantes, diasFaltantes, etc.
+    esProactivo:   boolean("es_proactivo").notNull().default(false),
   });
 
 

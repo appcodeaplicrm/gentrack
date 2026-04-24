@@ -48,7 +48,7 @@ export const NuevoGeneradorModal = ({ visible, onClose, onCreado }: Props) => {
             ]);
             const jsonNodos   = await resNodos.json();
             const jsonModelos = await resModelos.json();
-            if (jsonNodos.success)   setNodos(jsonNodos.data);
+            if (jsonNodos.success) setNodos(jsonNodos.data.filter((n: Nodo) => n.nombre.toLowerCase() !== 'sistema'));
             if (jsonModelos.success) setModelos(jsonModelos.data);
         } catch (err) {
             console.error('Error cargando opciones:', err);

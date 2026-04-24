@@ -92,8 +92,9 @@ export default function AdminNodos() {
     };
 
     const nodosFiltrados = nodos.filter(n =>
-        n.nombre.toLowerCase().includes(busqueda.toLowerCase()) ||
-        n.ubicacion.toLowerCase().includes(busqueda.toLowerCase())
+        n.nombre.toLowerCase() !== 'sistema' &&
+        (n.nombre.toLowerCase().includes(busqueda.toLowerCase()) ||
+        n.ubicacion.toLowerCase().includes(busqueda.toLowerCase()))
     );
 
     return (

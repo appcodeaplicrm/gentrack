@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { db } from '../db/db.js';
 import * as schema from '../db/schema.js';
-import { eq, notInArray, isNull } from 'drizzle-orm';
+import { eq, notInArray, isNull, ne, and } from 'drizzle-orm';
 import { verificarToken } from '../middleware/auth.js';
 import crypto from 'crypto';
 
@@ -18,7 +18,7 @@ const router = Router();
 router.get('/', verificarToken, async (req, res) => {
     try {
         const data = await db.select().from(schema.nodos)
-            .where(eq(schema.nodos.activo, true));
+            .where(and(eq(schema.nodos.activo, true), ne(schema.nodos.nombre, 'Sistema')));
         res.status(200).json({ success: true, data });
     } catch (error) {
         console.error(error);
@@ -59,9 +59,10 @@ router.get('/disponibles', verificarToken, async (req, res) => {
             : [eq(schema.nodos.activo, true)];
 
         const data = await db.select().from(schema.nodos)
-            .where(nodosOcupados.length > 0
-                ? notInArray(schema.nodos.idNodo, nodosOcupados)
-                : eq(schema.nodos.activo, true)
+            .where(
+                nodosOcupados.length > 0
+                    ? and(eq(schema.nodos.activo, true), notInArray(schema.nodos.idNodo, nodosOcupados), ne(schema.nodos.nombre, 'Sistema'))
+                    : and(eq(schema.nodos.activo, true), ne(schema.nodos.nombre, 'Sistema'))
             );
 
         res.status(200).json({ success: true, data });
