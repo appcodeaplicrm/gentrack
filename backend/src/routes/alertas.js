@@ -6,7 +6,7 @@ import { verificarToken }              from '../middleware/auth.js';
 
 const router = Router();
 
-/* ── Helpers de presentación ────────────────────────────────────────────────── */
+/* ── Helpers de presentación ─────────────────────────────────────────────── */
 const MENSAJE_CONFIG = {
     gasolina_baja: {
         titulo: (d) => `${d.genId} — Gasolina crítica`,
@@ -37,6 +37,13 @@ const MENSAJE_CONFIG = {
         cuerpo:  (d) => `El sistema apagó el generador en ${d.nodo} automáticamente al quedarse sin gasolina.`,
         badge:   ()  => ({ texto: 'Apagado por sistema', icono: 'power-outline' }),
     },
+    mantenimiento_pendiente: {
+        titulo: (d) => d.titulo  || `${d.genId} — Mantenimiento requerido`,
+        cuerpo:  (d) => d.mensaje || `Se requiere mantenimiento en ${d.genId}`,
+        badge:   (d) => d.prioridad === 'alta'
+            ? { texto: 'Urgente',   icono: 'alert-circle-outline' }
+            : { texto: 'Pendiente', icono: 'construct-outline'    },
+    },
 };
 
 const FALLBACK = {
@@ -56,16 +63,37 @@ function enriquecerAlerta(alerta) {
     };
 }
 
-/* ── GET /api/alertas ───────────────────────────────────────────────────────── */
-// Devuelve alertas con estado de lectura POR el usuario que hace la petición.
-// El campo `leida` ahora refleja si *ese* usuario la leyó, no un estado global.
+/* ── Filtro por rol ──────────────────────────────────────────────────────── */
+const ROLES_GLOBALES = ['admin', 'supervisor'];
+
+function condicionRol(rol) {
+    if (ROLES_GLOBALES.includes(rol)) return null;
+    return sql`(
+        ${schema.alertas.metadata}->>'grupoDestino' IS NULL
+        OR ${schema.alertas.metadata}->>'grupoDestino' = ${rol}
+    )`;
+}
+
+/* ── GET /api/alertas ────────────────────────────────────────────────────── */
 router.get('/', verificarToken, async (req, res) => {
     try {
-        const idUsuario                = req.usuario.idUsuario;
+        const { idUsuario, rol }            = req.usuario;
         const { soloNoLeidas, idGenerador } = req.query;
 
         const conditions = [];
+
         if (idGenerador) conditions.push(eq(schema.alertas.idGenerador, parseInt(idGenerador)));
+
+        const filtroRol = condicionRol(rol);
+        if (filtroRol) conditions.push(filtroRol);
+
+        // Excluir alertas descartadas individualmente por este usuario
+        conditions.push(sql`NOT EXISTS (
+            SELECT 1 FROM gentrack_alerta_lecturas al
+            WHERE al."idAlerta"  = ${schema.alertas.idAlerta}
+              AND al."idUsuario" = ${idUsuario}
+              AND al.descartada  = true
+        )`);
 
         const alertas = await db
             .select({
@@ -77,11 +105,11 @@ router.get('/', verificarToken, async (req, res) => {
                 idGenerador: schema.generadores.idGenerador,
                 genId:       schema.generadores.genId,
                 nodo:        schema.nodos.nombre,
-                // ↓ true/false según si ESTE usuario la leyó
                 leida: sql`EXISTS (
                     SELECT 1 FROM gentrack_alerta_lecturas al
                     WHERE al."idAlerta"  = ${schema.alertas.idAlerta}
                       AND al."idUsuario" = ${idUsuario}
+                      AND al.descartada  = false
                 )`.as('leida'),
                 leidaEn: sql`(
                     SELECT al."leida_en" FROM gentrack_alerta_lecturas al
@@ -98,10 +126,9 @@ router.get('/', verificarToken, async (req, res) => {
 
         let data = alertas.map(enriquecerAlerta);
 
-        // Filtrar después de enriquecer para poder contar correctamente
         if (soloNoLeidas === 'true') data = data.filter(a => !a.leida);
 
-        const noLeidas = alertas.filter(a => !a.leida).length; // siempre sobre el total
+        const noLeidas = alertas.filter(a => !a.leida).length;
 
         res.status(200).json({ success: true, data, noLeidas });
     } catch (error) {
@@ -110,15 +137,75 @@ router.get('/', verificarToken, async (req, res) => {
     }
 });
 
-/* ── PATCH /api/alertas/leer-todas ─────────────────────────────────────────── */
+/* ── PATCH /api/alertas/:id/leer ─────────────────────────────────────────── */
+router.patch('/:id/leer', verificarToken, async (req, res) => {
+    try {
+        const idAlerta  = parseInt(req.params.id);
+        const idUsuario = req.usuario.idUsuario;
+
+        const alerta = await db
+            .select({ idAlerta: schema.alertas.idAlerta })
+            .from(schema.alertas)
+            .where(eq(schema.alertas.idAlerta, idAlerta))
+            .limit(1);
+
+        if (alerta.length === 0)
+            return res.status(404).json({ success: false, error: 'Alerta no encontrada' });
+
+        await db.insert(schema.alertaLecturas)
+            .values({ idAlerta, idUsuario, descartada: false })
+            .onConflictDoNothing();
+
+        res.status(200).json({ success: true });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ success: false, error: 'Error al marcar alerta como leída' });
+    }
+});
+
+/* ── DELETE /api/alertas/:id ─────────────────────────────────────────────────
+   Soft-delete individual: desaparece solo para este usuario.
+   El registro en alertas no se borra — otros usuarios la siguen viendo.
+────────────────────────────────────────────────────────────────────────────── */
+router.delete('/:id', verificarToken, async (req, res) => {
+    try {
+        const idAlerta  = parseInt(req.params.id);
+        const idUsuario = req.usuario.idUsuario;
+
+        const alerta = await db
+            .select({ idAlerta: schema.alertas.idAlerta })
+            .from(schema.alertas)
+            .where(eq(schema.alertas.idAlerta, idAlerta))
+            .limit(1);
+
+        if (alerta.length === 0)
+            return res.status(404).json({ success: false, error: 'Alerta no encontrada' });
+
+        // Upsert: si ya existía lectura (leída sin descartar) la actualiza a descartada
+        await db.insert(schema.alertaLecturas)
+            .values({ idAlerta, idUsuario, descartada: true })
+            .onConflictDoUpdate({
+                target: [schema.alertaLecturas.idAlerta, schema.alertaLecturas.idUsuario],
+                set:    { descartada: true, leidaEn: new Date() },
+            });
+
+        res.status(200).json({ success: true });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ success: false, error: 'Error al descartar alerta' });
+    }
+});
+
+/* ── PATCH /api/alertas/leer-todas ──────────────────────────────────────── */
 router.patch('/leer-todas', verificarToken, async (req, res) => {
     try {
-        const idUsuario     = req.usuario.idUsuario;
-        const { idGenerador } = req.body;
+        const { idUsuario, rol } = req.usuario;
+        const { idGenerador }    = req.body;
 
-        // Traer IDs de alertas que este usuario aún no ha leído
         const conditions = [];
         if (idGenerador) conditions.push(eq(schema.alertas.idGenerador, parseInt(idGenerador)));
+        const filtroRol = condicionRol(rol);
+        if (filtroRol) conditions.push(filtroRol);
 
         const todasAlertas = await db
             .select({ idAlerta: schema.alertas.idAlerta })
@@ -130,23 +217,20 @@ router.patch('/leer-todas', verificarToken, async (req, res) => {
 
         const ids = todasAlertas.map(a => a.idAlerta);
 
-        // Solo insertar las que no tiene registro aún
         const yaLeidas = await db
             .select({ idAlerta: schema.alertaLecturas.idAlerta })
             .from(schema.alertaLecturas)
-            .where(
-                and(
-                    eq(schema.alertaLecturas.idUsuario, idUsuario),
-                    inArray(schema.alertaLecturas.idAlerta, ids)
-                )
-            );
+            .where(and(
+                eq(schema.alertaLecturas.idUsuario, idUsuario),
+                inArray(schema.alertaLecturas.idAlerta, ids)
+            ));
 
         const yaLeidasSet = new Set(yaLeidas.map(r => r.idAlerta));
         const pendientes  = ids.filter(id => !yaLeidasSet.has(id));
 
         if (pendientes.length > 0) {
             await db.insert(schema.alertaLecturas)
-                .values(pendientes.map(idAlerta => ({ idAlerta, idUsuario })))
+                .values(pendientes.map(idAlerta => ({ idAlerta, idUsuario, descartada: false })))
                 .onConflictDoNothing();
         }
 
@@ -157,11 +241,10 @@ router.patch('/leer-todas', verificarToken, async (req, res) => {
     }
 });
 
-/* ── DELETE /api/alertas/limpiar-leidas ─────────────────────────────────────── */
-// Elimina alertas que TODOS los usuarios activos hayan leído
+/* ── DELETE /api/alertas/limpiar-leidas ──────────────────────────────────── */
+// Elimina físicamente solo alertas que TODOS los usuarios activos descartaron
 router.delete('/limpiar-leidas', verificarToken, async (req, res) => {
     try {
-        // Contar usuarios activos
         const usuariosActivos = await db
             .select({ idUsuario: schema.usuarios.idUsuario })
             .from(schema.usuarios)
@@ -171,17 +254,17 @@ router.delete('/limpiar-leidas', verificarToken, async (req, res) => {
         if (totalUsuarios === 0)
             return res.status(200).json({ success: true, eliminadas: 0 });
 
-        // Alertas leídas por todos
-        const alertasLeidas = await db
+        const alertasDescartadas = await db
             .select({ idAlerta: schema.alertaLecturas.idAlerta })
             .from(schema.alertaLecturas)
+            .where(eq(schema.alertaLecturas.descartada, true))
             .groupBy(schema.alertaLecturas.idAlerta)
             .having(sql`COUNT(DISTINCT ${schema.alertaLecturas.idUsuario}) >= ${totalUsuarios}`);
 
-        if (alertasLeidas.length === 0)
+        if (alertasDescartadas.length === 0)
             return res.status(200).json({ success: true, eliminadas: 0 });
 
-        const ids = alertasLeidas.map(a => a.idAlerta);
+        const ids = alertasDescartadas.map(a => a.idAlerta);
 
         const eliminadas = await db
             .delete(schema.alertas)
@@ -192,53 +275,6 @@ router.delete('/limpiar-leidas', verificarToken, async (req, res) => {
     } catch (error) {
         console.error(error);
         res.status(500).json({ success: false, error: 'Error al limpiar alertas' });
-    }
-});
-
-/* ── PATCH /api/alertas/:id/leer ────────────────────────────────────────────── */
-router.patch('/:id/leer', verificarToken, async (req, res) => {
-    try {
-        const idAlerta  = parseInt(req.params.id);
-        const idUsuario = req.usuario.idUsuario;
-
-        // Verificar que la alerta existe
-        const alerta = await db
-            .select({ idAlerta: schema.alertas.idAlerta })
-            .from(schema.alertas)
-            .where(eq(schema.alertas.idAlerta, idAlerta))
-            .limit(1);
-
-        if (alerta.length === 0)
-            return res.status(404).json({ success: false, error: 'Alerta no encontrada' });
-
-        await db.insert(schema.alertaLecturas)
-            .values({ idAlerta, idUsuario })
-            .onConflictDoNothing();
-
-        res.status(200).json({ success: true });
-    } catch (error) {
-        console.error(error);
-        res.status(500).json({ success: false, error: 'Error al marcar alerta como leída' });
-    }
-});
-
-/* ── DELETE /api/alertas/:id ────────────────────────────────────────────────── */
-router.delete('/:id', verificarToken, async (req, res) => {
-    try {
-        const { id } = req.params;
-
-        const data = await db
-            .delete(schema.alertas)
-            .where(eq(schema.alertas.idAlerta, parseInt(id)))
-            .returning();
-
-        if (data.length === 0)
-            return res.status(404).json({ success: false, error: 'Alerta no encontrada' });
-
-        res.status(200).json({ success: true, data: data[0] });
-    } catch (error) {
-        console.error(error);
-        res.status(500).json({ success: false, error: 'Error al eliminar alerta' });
     }
 });
 

@@ -83,6 +83,8 @@ router.get('/proximos', verificarToken, async (req, res) => {
             consumoGasolinaHoras:   schema.generadoresModelos.consumoGasolinaHoras,
             encendidoEn:            schema.generadores.encendidoEn,
             createdAt:              schema.generadores.createdAt,
+            esNuevo:                schema.generadores.esNuevo,
+            cambiosAceiteIniciales: schema.generadores.cambiosAceiteIniciales,
         })
         .from(schema.generadores)
         .innerJoin(schema.generadoresModelos, eq(schema.generadores.idModelo, schema.generadoresModelos.idModelo))
@@ -161,9 +163,12 @@ router.get('/proximos', verificarToken, async (req, res) => {
             const pendienteAceite = pendientesMap[`${g.idGenerador}-aceite`];
             if (pendienteAceite) {
                 const { horasUltimo, idMantenimiento: idMantAceite } = await getHorasUltimoMant(g.idGenerador, 'aceite');
-                const horasDesde    = horasActuales - horasUltimo;
-                const horasFaltan   = Math.max(0, 150 - horasDesde);
-                const progreso      = Math.min(1, horasDesde / 150);
+                const cambiosIniciales = g.cambiosAceiteIniciales ?? 0;
+                const UMBRALES_NUEVO   = [10, 25, 50, 75, 100];
+                const umbral           = g.esNuevo ? (UMBRALES_NUEVO[cambiosIniciales] ?? 100) : 100;
+                const horasDesde       = g.esNuevo ? horasActuales : horasActuales - horasUltimo;
+                const horasFaltan      = Math.max(0, umbral - horasDesde);
+                const progreso         = Math.min(1, horasDesde / umbral);
 
                 resultado.push({
                     idMantenimiento: idMantAceite || `new-aceite-${g.idGenerador}`,
@@ -179,7 +184,7 @@ router.get('/proximos', verificarToken, async (req, res) => {
                     horasFaltantes:  Math.round(horasFaltan * 100) / 100,
                     progreso:        parseFloat(progreso.toFixed(2)),
                     prioridad:       pendienteAceite.prioridad,
-                    meta:            'Cada 150h de uso',
+                    meta:            g.esNuevo ? `Rodaje #${cambiosIniciales + 1} — a las ${umbral}h` : 'Cada 100h de uso',
                 });
             }
 
@@ -604,6 +609,26 @@ router.post('/', verificarToken, requiereRol('tecnico_abastecimiento', 'tecnico_
         }
 
         if (tipo === 'aceite') {
+            const genActual = await db.select({
+                esNuevo:                schema.generadores.esNuevo,
+                cambiosAceiteIniciales: schema.generadores.cambiosAceiteIniciales,
+            })
+            .from(schema.generadores)
+            .where(eq(schema.generadores.idGenerador, idGenerador));
+
+            const { esNuevo, cambiosAceiteIniciales } = genActual[0];
+
+            if (esNuevo) {
+                const nuevoConteo = cambiosAceiteIniciales + 1;
+                await db.update(schema.generadores)
+                    .set({
+                        cambiosAceiteIniciales: nuevoConteo,
+                        esNuevo:               nuevoConteo >= 5 ? false : true,
+                        updatedAt:             new Date(),
+                    })
+                    .where(eq(schema.generadores.idGenerador, idGenerador));
+            }
+
             await db.update(schema.alertas)
                 .set({ leida: true, leidaEn: new Date() })
                 .where(and(

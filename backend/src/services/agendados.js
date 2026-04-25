@@ -3,6 +3,7 @@ import * as schema    from '../db/schema.js';
 import { eq, and, lte } from 'drizzle-orm';
 import { notificar, NOTIF }             from './notificaciones.js';
 import { tuyaEncenderGenerador }        from './tuya.js';
+import { tag } from './colors.js';
 
 const registrarEvento = async ({ idGenerador, idUsuario, tipoEvento, origen, metadata }) => {
     await db.insert(schema.eventos).values({
@@ -16,12 +17,10 @@ const registrarEvento = async ({ idGenerador, idUsuario, tipoEvento, origen, met
 };
 
 function proximaFechaRecurrente(diasSemana, horaBase) {
-    // diasSemana: [1,2,5] — misma hora, próximo día de semana que aplique
     const ahora   = new Date();
-    const diaHoy  = ahora.getDay(); // 0=dom ... 6=sab
+    const diaHoy  = ahora.getDay();
     const hora    = new Date(horaBase);
 
-    // Ordenar días y encontrar el próximo
     const diasOrdenados = [...diasSemana].sort((a, b) => a - b);
 
     for (let offset = 1; offset <= 7; offset++) {
@@ -41,7 +40,6 @@ async function ejecutarAgendados() {
     try {
         const ahora = new Date();
 
-        // Traer todos los pendientes cuya fechaHora ya llegó
         const agendados = await db.select({
             idAgendado:  schema.encendidosAgendados.idAgendado,
             idGenerador: schema.encendidosAgendados.idGenerador,
@@ -70,11 +68,9 @@ async function ejecutarAgendados() {
 
         for (const agendado of agendados) {
             try {
-                // Si ya está corriendo, no encender de nuevo
                 if (agendado.estado === 'corriendo') {
-                    console.log(`[AGENDADOS] ${agendado.genId} ya está corriendo — saltando`);
+                    console.log(`${tag('pink', 'AGENDADOS')} ${agendado.genId} ya está corriendo — saltando`);
 
-                    // Si es recurrente igual actualizamos la próxima fecha
                     if (agendado.recurrente && agendado.diasSemana) {
                         const proxima = proximaFechaRecurrente(agendado.diasSemana, agendado.fechaHora);
                         if (proxima) {
@@ -130,7 +126,7 @@ async function ejecutarAgendados() {
                 // ── Tuya ─────────────────────────────────────────────────
                 if (agendado.tuyaDeviceId) {
                     tuyaEncenderGenerador(agendado.tuyaDeviceId)
-                        .catch(err => console.error(`[AGENDADOS] Tuya error ${agendado.genId}:`, err.message));
+                        .catch(err => console.error(`${tag('pink', 'AGENDADOS')} Tuya error ${agendado.genId}:`, err.message));
                 }
 
                 // ── Notificar al técnico ─────────────────────────────────
@@ -140,11 +136,10 @@ async function ejecutarAgendados() {
                     nodo:        agendado.nodo,
                 });
 
-                console.log(`[AGENDADOS] ${agendado.genId} encendido exitosamente`);
+                console.log(`${tag('pink', 'AGENDADOS')} ${agendado.genId} encendido exitosamente`);
 
                 // ── Actualizar agendado ──────────────────────────────────
                 if (agendado.recurrente && agendado.diasSemana) {
-                    // Recurrente — calcular próxima fecha
                     const proxima = proximaFechaRecurrente(agendado.diasSemana, agendado.fechaHora);
                     if (proxima) {
                         await db.update(schema.encendidosAgendados)
@@ -152,23 +147,22 @@ async function ejecutarAgendados() {
                             .where(eq(schema.encendidosAgendados.idAgendado, agendado.idAgendado));
                     }
                 } else {
-                    // Una sola vez — marcar ejecutado
                     await db.update(schema.encendidosAgendados)
                         .set({ estado: 'ejecutado', ejecutadoEn: ahora })
                         .where(eq(schema.encendidosAgendados.idAgendado, agendado.idAgendado));
                 }
 
             } catch (err) {
-                console.error(`[AGENDADOS] Error ejecutando agendado ${agendado.idAgendado}:`, err.message);
+                console.error(`${tag('pink', 'AGENDADOS')} Error ejecutando agendado ${agendado.idAgendado}:`, err.message);
             }
         }
 
         if (agendados.length > 0) {
-            console.log(`[AGENDADOS] ${agendados.length} agendado(s) procesado(s)`);
+            console.log(`${tag('pink', 'AGENDADOS')} ${agendados.length} agendado(s) procesado(s)`);
         }
 
     } catch (err) {
-        console.error('[AGENDADOS] Error en polling:', err);
+        console.error(`${tag('pink', 'AGENDADOS')} Error en polling:`, err);
     }
 }
 
@@ -177,6 +171,6 @@ export function iniciarPollingAgendados() {
 
     const interval = setInterval(ejecutarAgendados, 60 * 1000);
 
-    console.log('[AGENDADOS] Polling iniciado (cada 1 min)');
+    console.log(`${tag('pink', 'AGENDADOS')} Polling iniciado (cada 1 min)`);
     return interval;
 }

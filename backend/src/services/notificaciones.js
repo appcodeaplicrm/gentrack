@@ -1,7 +1,8 @@
 import { Expo } from 'expo-server-sdk';
 import { db }   from '../db/db.js';
 import * as schema from '../db/schema.js';
-import { eq, inArray, and } from 'drizzle-orm'; // ← agregar inArray y and
+import { eq, inArray, and } from 'drizzle-orm';
+import { tag } from './colors.js';
 
 const expo = new Expo();
 
@@ -32,7 +33,7 @@ const CONFIG = {
         prioridad:     'normal',
         severidad:     'info',
         guardarAlerta: false,
-        grupoDestino:  null, // null = todos
+        grupoDestino:  null,
     },
     [NOTIF.GENERADOR_ENCENDIDO_MANUAL]: {
         titulo:        (d) => `${d.genId} encendido`,
@@ -120,8 +121,6 @@ const CONFIG = {
         prioridad:     'high',
         severidad:     'advertencia',
         guardarAlerta: true,
-        // grupoDestino viene del data (lo pone el polling), no del CONFIG
-        // porque varía por tipo de mantenimiento
         grupoDestino:  null,
     },
     [NOTIF.LIMITE_CORRIENDO]: {
@@ -150,7 +149,7 @@ const CONFIG = {
 async function obtenerTokens(grupoDestino = null) {
     const rolesDestino = grupoDestino
         ? [...ROLES_GLOBALES, grupoDestino]
-        : null; // null = sin filtro de rol
+        : null;
 
     const usuariosQuery = db
         .select({ idUsuario: schema.usuarios.idUsuario })
@@ -187,28 +186,43 @@ export async function notificar(tipo, data = {}) {
     try {
         const config = CONFIG[tipo];
         if (!config) {
-            console.warn(`[NOTIF] Tipo desconocido: ${tipo}`);
+            console.warn(`${tag('red', 'NOTIF')} Tipo desconocido: ${tipo}`);
             return;
         }
 
-        // MANTENIMIENTO_PENDIENTE puede sobreescribir grupoDestino desde el polling
         const grupoDestino = data.grupoDestino ?? config.grupoDestino;
 
         // Guardar alerta en DB si aplica
-        if (config.guardarAlerta && data.idGenerador) {
-            await db.insert(schema.alertas).values({
-                idGenerador: data.idGenerador,
-                tipo,
-                severidad:   config.severidad,
-                leida:       false,
-                metadata:    data,
-            });
+        if (config.guardarAlerta && data.idGenerador && !data._skipAlerta) {
+            console.log(`${tag('red', 'NOTIF')} Intentando insertar alerta: ${tipo} ${data.idGenerador}`);
+
+            const existente = await db
+                .select({ idAlerta: schema.alertas.idAlerta })
+                .from(schema.alertas)
+                .where(and(
+                    eq(schema.alertas.idGenerador, data.idGenerador),
+                    eq(schema.alertas.tipo, tipo),
+                ))
+                .limit(1);
+
+            if (existente.length === 0) {
+                console.log(`${tag('red', 'NOTIF')} Insertando alerta nueva`);
+                await db.insert(schema.alertas).values({
+                    idGenerador: data.idGenerador,
+                    tipo,
+                    severidad:   config.severidad,
+                    leida:       false,
+                    metadata:    { ...data, grupoDestino: grupoDestino ?? null },
+                });
+            } else {
+                console.log(`${tag('red', 'NOTIF')} Alerta ya existe, omitiendo`);
+            }
         }
 
         // Obtener tokens filtrados por rol
         const tokens = await obtenerTokens(grupoDestino);
         if (tokens.length === 0) {
-            console.log(`[NOTIF] Sin tokens para grupoDestino="${grupoDestino ?? 'todos'}"`);
+            console.log(`${tag('red', 'NOTIF')} Sin tokens para grupoDestino="${grupoDestino ?? 'todos'}"`);
             return;
         }
 
@@ -225,19 +239,18 @@ export async function notificar(tipo, data = {}) {
         for (const chunk of chunks) {
             const tickets = await expo.sendPushNotificationsAsync(chunk);
 
-            // Desactivar tokens inválidos
             for (let i = 0; i < tickets.length; i++) {
                 if (tickets[i].status === 'error' && tickets[i].details?.error === 'DeviceNotRegistered') {
                     await db.update(schema.pushTokens)
                         .set({ activo: false })
                         .where(eq(schema.pushTokens.token, tokens[i].token));
-                    console.log(`[NOTIF] Token desactivado: ${tokens[i].token}`);
+                    console.log(`${tag('red', 'NOTIF')} Token desactivado: ${tokens[i].token}`);
                 }
             }
         }
 
-        console.log(`[NOTIF] "${tipo}" → ${tokens.length} dispositivos (grupo: ${grupoDestino ?? 'todos'})`);
+        console.log(`${tag('red', 'NOTIF')} "${tipo}" → ${tokens.length} dispositivos (grupo: ${grupoDestino ?? 'todos'})`);
     } catch (err) {
-        console.error('[NOTIF] Error:', err.message);
+        console.error(`${tag('red', 'NOTIF')} Error:`, err.message);
     }
 }

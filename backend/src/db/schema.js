@@ -99,6 +99,8 @@
     updatedAt:            timestamp("updated_at").defaultNow(),
     limiteCorridaEn:      timestamp("limite_corrida_en"),
     tuyaDeviceId:         varchar("tuya_device_id", { length: 100 }),
+    esNuevo:              boolean("es_nuevo").notNull().default(true),
+    cambiosAceiteIniciales: integer("cambios_aceite_iniciales").notNull().default(0),
   });
 
   // Sesiones de Operacion
@@ -153,15 +155,18 @@
     metadata:    jsonb("metadata"),
   });
 
-  export const alertaLecturas = pgTable("gentrack_alerta_lecturas", {
-    idLectura:  serial("idLectura").primaryKey(),
-    idAlerta:   integer("idAlerta").notNull().references(() => alertas.idAlerta, { onDelete: "cascade" }),
-    idUsuario:  integer("idUsuario").notNull().references(() => usuarios.idUsuario, { onDelete: "cascade" }),
-    leidaEn:    timestamp("leida_en").defaultNow().notNull(),
-  },
-  (t) => ({
+export const alertaLecturas = pgTable("gentrack_alerta_lecturas", {
+    idLectura:   serial("idLectura").primaryKey(),
+    idAlerta:    integer("idAlerta").notNull().references(() => alertas.idAlerta, { onDelete: "cascade" }),
+    idUsuario:   integer("idUsuario").notNull().references(() => usuarios.idUsuario, { onDelete: "cascade" }),
+    leidaEn:     timestamp("leida_en").defaultNow().notNull(),
+    // true = el usuario deslizó/descartó la alerta (desaparece de su vista)
+    // false = solo la leyó (sigue visible pero sin badge)
+    descartada:  boolean("descartada").notNull().default(false),
+},
+(t) => ({
     uniq: uniqueIndex("alerta_usuario_uniq").on(t.idAlerta, t.idUsuario),
-  }));
+}));
 
   // Reportes
   export const reportes = pgTable("gentrack_reportes", {

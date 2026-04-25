@@ -10,7 +10,7 @@ import { useData } from '@/provider/DataProvider';
 import { COLORS } from '@/assets/styles/colors';
 
 const API_URL    = process.env.EXPO_PUBLIC_API_URL;
-const SWIPE_THRESHOLD = 80; // px para activar dismiss
+const SWIPE_THRESHOLD = 80;
 
 /* ── Tipos ───────────────────────────────────────────────────────── */
 interface AlertaItem {
@@ -96,33 +96,30 @@ const agruparPorDia = (alertas: AlertaItem[]): Grupo[] => {
 /* ── AlertaCard con swipe ────────────────────────────────────────── */
 function AlertaCard({
     alerta,
-    onLeer,
     onEliminar,
 }: {
     alerta:     AlertaItem;
-    onLeer:     (id: number) => void;
     onEliminar: (id: number) => void;
 }) {
-    const col      = paleta(alerta.severidad);
+    const col        = paleta(alerta.severidad);
     const translateX = useRef(new Animated.Value(0)).current;
     const opacity    = useRef(new Animated.Value(1)).current;
-    const height     = useRef(new Animated.Value(1)).current; // scale trick
+    const height     = useRef(new Animated.Value(1)).current;
     const marginBot  = useRef(new Animated.Value(10)).current;
 
-    /* Animación de salida */
+    /* Animación de salida — igual para tap y swipe */
     const salir = (direccion: 'swipe' | 'tap') => {
-        const toX    = direccion === 'swipe' ? -500 : 20;
-        const toOpac = 0;
+        const toX = direccion === 'swipe' ? -500 : 20;
         Animated.parallel([
-            Animated.timing(translateX, { toValue: toX,    duration: 260, useNativeDriver: false }),
-            Animated.timing(opacity,    { toValue: toOpac, duration: 220, useNativeDriver: false }),
+            Animated.timing(translateX, { toValue: toX, duration: 260, useNativeDriver: false }),
+            Animated.timing(opacity,    { toValue: 0,   duration: 220, useNativeDriver: false }),
         ]).start(() => {
             Animated.parallel([
-                Animated.timing(height,    { toValue: 0,  duration: 280, useNativeDriver: false }),
-                Animated.timing(marginBot, { toValue: 0,  duration: 280, useNativeDriver: false }),
+                Animated.timing(height,    { toValue: 0, duration: 280, useNativeDriver: false }),
+                Animated.timing(marginBot, { toValue: 0, duration: 280, useNativeDriver: false }),
             ]).start(() => {
-                if (direccion === 'tap') onLeer(alerta.idAlerta);
-                else onEliminar(alerta.idAlerta);
+                // Ambos gestos descartan — siempre llaman onEliminar
+                onEliminar(alerta.idAlerta);
             });
         });
     };
@@ -157,7 +154,6 @@ function AlertaCard({
             opacity,
             transform: [{ translateX }],
         }}>
-
             <Animated.View
                 style={[c.card, { borderColor: col.borde }]}
                 {...panResponder.panHandlers}
@@ -183,7 +179,7 @@ function AlertaCard({
                     </View>
                 </View>
 
-                {/* Contenido — tap para marcar leída y desaparecer */}
+                {/* Contenido — tap descarta igual que el swipe */}
                 <TouchableOpacity activeOpacity={0.9} onPress={() => salir('tap')}>
                     <Text style={c.titulo}>{alerta.titulo}</Text>
                     <Text style={c.mensaje}>{alerta.mensaje}</Text>
@@ -192,7 +188,7 @@ function AlertaCard({
                             <Ionicons name={alerta.badge.icono as any} size={11} color={col.badgeText} />
                             <Text style={[c.badgeText, { color: col.badgeText }]}>{alerta.badge.texto}</Text>
                         </View>
-                        <Text style={c.hint}>Toca para marcar leída</Text>
+                        <Text style={c.hint}>Toca para descartar</Text>
                     </View>
                 </TouchableOpacity>
             </Animated.View>
@@ -213,9 +209,9 @@ function Sep({ titulo }: { titulo: string }) {
 
 /* ── Pantalla principal ──────────────────────────────────────────── */
 export default function Alertas() {
-    const { fetchConAuth }                    = useAuth();
-    const { alertas, noLeidas, recargar }     = useData();
-    const [refreshing, setRefreshing]         = useState(false);
+    const { fetchConAuth }                = useAuth();
+    const { alertas, noLeidas, recargar } = useData();
+    const [refreshing, setRefreshing]     = useState(false);
 
     const onRefresh = async () => {
         setRefreshing(true);
@@ -223,22 +219,13 @@ export default function Alertas() {
         setRefreshing(false);
     };
 
-    /* Marcar leída — el componente ya hizo la animación,
-       solo hacemos el fetch y recargamos en background */
-    const marcarLeida = useCallback(async (id: number) => {
-        try {
-            await fetchConAuth(`${API_URL}/api/alertas/${id}/leer`, { method: 'PATCH' });
-            recargar('alertas');
-        } catch (err) { console.error(err); }
-    }, []);
-
-    /* Eliminar */
+    /* Descartar — soft-delete individual en el servidor */
     const eliminar = useCallback(async (id: number) => {
         try {
             await fetchConAuth(`${API_URL}/api/alertas/${id}`, { method: 'DELETE' });
             recargar('alertas');
         } catch (err) { console.error(err); }
-    }, []);
+    }, [fetchConAuth, recargar]);
 
     /* Marcar todas leídas */
     const marcarTodas = async () => {
@@ -248,11 +235,11 @@ export default function Alertas() {
         } catch (err) { console.error(err); }
     };
 
-    /* Limpiar leídas */
+    /* Limpiar descartadas por todos */
     const limpiarLeidas = () => {
         Alert.alert(
             'Limpiar alertas',
-            '¿Eliminar las alertas que todos han leído?',
+            '¿Eliminar las alertas que todos han descartado?',
             [
                 { text: 'Cancelar', style: 'cancel' },
                 {
@@ -296,12 +283,11 @@ export default function Alertas() {
                 )}
             </View>
 
-
             {/* Hint de swipe */}
             {alertas.length > 0 && (
                 <View style={s.swipeHint}>
                     <Ionicons name="arrow-back-outline" size={12} color="rgba(255,255,255,0.2)" />
-                    <Text style={s.swipeHintText}>Desliza izquierda para eliminar</Text>
+                    <Text style={s.swipeHintText}>Desliza o toca para descartar</Text>
                 </View>
             )}
 
@@ -333,7 +319,6 @@ export default function Alertas() {
                                 <AlertaCard
                                     key={a.idAlerta}
                                     alerta={a}
-                                    onLeer={marcarLeida}
                                     onEliminar={eliminar}
                                 />
                             ))}
@@ -348,21 +333,6 @@ export default function Alertas() {
 
 /* ── Estilos ─────────────────────────────────────────────────────── */
 const c = StyleSheet.create({
-    swipeBg: {
-        position:       'absolute',
-        right:          0, top: 0, bottom: 0,
-        width:          '100%',
-        backgroundColor:'rgba(255,71,87,0.15)',
-        borderRadius:   16,
-        borderWidth:    1,
-        borderColor:    'rgba(255,71,87,0.3)',
-        flexDirection:  'row',
-        alignItems:     'center',
-        justifyContent: 'flex-end',
-        paddingRight:   20,
-        gap:            6,
-    },
-    swipeBgText: { color: '#ff6b7a', fontSize: 13, fontWeight: '600' },
     card: {
         backgroundColor: 'rgba(8,15,40,0.85)',
         borderRadius:    16,
@@ -416,17 +386,6 @@ const s = StyleSheet.create({
     },
     badgeDot:       { width: 7, height: 7, borderRadius: 4, backgroundColor: '#00e5a0' },
     badgeNuevasText:{ fontSize: 12, fontWeight: '600', color: '#00e5a0' },
-    acciones: {
-        flexDirection: 'row', gap: 8, paddingHorizontal: 20, marginBottom: 10, flexWrap: 'wrap',
-    },
-    btnAccion: {
-        flexDirection: 'row', alignItems: 'center', gap: 6,
-        backgroundColor: 'rgba(79,143,255,0.06)', borderRadius: 20,
-        paddingHorizontal: 12, paddingVertical: 7,
-        borderWidth: 1, borderColor: 'rgba(79,143,255,0.25)',
-    },
-    btnDanger:     { borderColor: 'rgba(255,71,87,0.2)', backgroundColor: 'rgba(255,71,87,0.05)' },
-    btnAccionText: { fontSize: 12, fontWeight: '600', color: '#4f8fff' },
     swipeHint: {
         flexDirection: 'row', alignItems: 'center', gap: 6,
         marginHorizontal: 20, marginBottom: 10,

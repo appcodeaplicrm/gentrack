@@ -25,10 +25,16 @@ interface Generador {
 interface Nodo   { idNodo: number; nombre: string; ubicacion: string }
 interface Modelo { idModelo: number; nombre: string; marca: string }
 
-const FORM_VACIO = { genId: '', idNodo: 0, idModelo: 0 };
+const FORM_VACIO = {
+    genId:                 '',
+    idNodo:                0,
+    idModelo:              0,
+    esNuevo:               true,
+    cambiosAceiteIniciales: '',
+};
 
 const ESTADO_COLOR: Record<string, { color: string; bg: string; border: string }> = {
-    corriendo: { color: '#00e5a0', bg: 'rgba(0,229,160,0.1)',  border: 'rgba(0,229,160,0.3)'  },
+    corriendo: { color: '#00e5a0', bg: 'rgba(0,229,160,0.1)',   border: 'rgba(0,229,160,0.3)'   },
     apagado:   { color: '#94a3b8', bg: 'rgba(148,163,184,0.1)', border: 'rgba(148,163,184,0.2)' },
     alerta:    { color: '#ff9f43', bg: 'rgba(255,159,67,0.1)',  border: 'rgba(255,159,67,0.3)'  },
 };
@@ -76,10 +82,16 @@ export default function AdminGeneradores() {
         finally { setCargandoNodos(false); }
     };
 
-    const abrirCrear  = async () => { setEditando(null); setForm(FORM_VACIO); setModal(true); await cargarNodosDisponibles(); };
+    const abrirCrear = async () => {
+        setEditando(null);
+        setForm(FORM_VACIO);
+        setModal(true);
+        await cargarNodosDisponibles();
+    };
+
     const abrirEditar = async (g: Generador) => {
         setEditando(g);
-        setForm({ genId: g.genId, idNodo: g.idNodo ?? 0, idModelo: g.idModelo ?? 0 });
+        setForm({ genId: g.genId, idNodo: g.idNodo ?? 0, idModelo: g.idModelo ?? 0, esNuevo: true, cambiosAceiteIniciales: '' });
         setModal(true);
         await cargarNodosDisponibles(g.idGenerador);
     };
@@ -88,12 +100,36 @@ export default function AdminGeneradores() {
         if (!form.genId || !form.idNodo || !form.idModelo) {
             return Alert.alert('Error', 'Completa todos los campos');
         }
+
+        let cambiosAceiteIniciales = 0;
+
+        if (!editando) {
+            // Solo al crear se valida esNuevo / cambios
+            if (!form.esNuevo) {
+                const parsed = parseInt(form.cambiosAceiteIniciales);
+                if (isNaN(parsed) || parsed < 0) {
+                    return Alert.alert('Error', 'Ingresa un número válido de cambios de aceite');
+                }
+                cambiosAceiteIniciales = Math.min(parsed, 5);
+            }
+        }
+
         setGuardando(true);
         try {
-            const body = { genId: form.genId, idNodo: form.idNodo, idModelo: form.idModelo };
+            const body = editando
+                ? { genId: form.genId, idNodo: form.idNodo, idModelo: form.idModelo }
+                : {
+                    genId:                 form.genId,
+                    idNodo:                form.idNodo,
+                    idModelo:              form.idModelo,
+                    esNuevo:               form.esNuevo,
+                    cambiosAceiteIniciales,
+                  };
+
             const res  = editando
                 ? await fetchConAuth(`${API_URL}/api/generadores/${editando.idGenerador}`, { method: 'PUT',  body: JSON.stringify(body) })
                 : await fetchConAuth(`${API_URL}/api/generadores`,                          { method: 'POST', body: JSON.stringify(body) });
+
             const json = await res.json();
             if (!res.ok) throw new Error(json.error);
             setModal(false);
@@ -121,7 +157,7 @@ export default function AdminGeneradores() {
 
     const generadoresFiltrados = generadores.filter(g =>
         g.genId.toLowerCase().includes(busqueda.toLowerCase()) ||
-        g.nodo.toLowerCase().includes(busqueda.toLowerCase()) ||
+        g.nodo.toLowerCase().includes(busqueda.toLowerCase())  ||
         g.modelo.toLowerCase().includes(busqueda.toLowerCase())
     );
 
@@ -304,6 +340,58 @@ export default function AdminGeneradores() {
                                 </ScrollView>
                             </View>
 
+                            {/* Es nuevo — solo al crear */}
+                            {!editando && (
+                                <>
+                                    <View style={m.campo}>
+                                        <Text style={m.label}>Estado del generador</Text>
+                                        <TouchableOpacity
+                                            style={m.toggleRow}
+                                            onPress={() => setForm(prev => ({
+                                                ...prev,
+                                                esNuevo:               !prev.esNuevo,
+                                                cambiosAceiteIniciales: '',
+                                            }))}
+                                            activeOpacity={0.8}
+                                        >
+                                            <View style={m.toggleInfo}>
+                                                <Text style={m.toggleTitle}>
+                                                    {form.esNuevo ? 'Generador nuevo' : 'Generador usado'}
+                                                </Text>
+                                                <Text style={m.toggleSub}>
+                                                    {form.esNuevo
+                                                        ? 'Primer cambio de aceite a las 10h'
+                                                        : 'Especifica cuántos cambios de aceite se le han hecho'
+                                                    }
+                                                </Text>
+                                            </View>
+                                            <View style={[m.toggle, form.esNuevo && m.toggleActive]}>
+                                                <View style={[m.toggleThumb, form.esNuevo && m.toggleThumbActive]} />
+                                            </View>
+                                        </TouchableOpacity>
+                                    </View>
+
+                                    {/* Cambios de aceite — solo si no es nuevo */}
+                                    {!form.esNuevo && (
+                                        <View style={m.campo}>
+                                            <Text style={m.label}>Cambios de aceite realizados</Text>
+                                            <View style={m.inputRow}>
+                                                <Ionicons name="water-outline" size={16} color={COLORS.textMuted} style={m.inputIcon} />
+                                                <TextInput
+                                                    style={m.input}
+                                                    value={form.cambiosAceiteIniciales}
+                                                    onChangeText={v => setForm(prev => ({ ...prev, cambiosAceiteIniciales: v.replace(/[^0-9]/g, '') }))}
+                                                    placeholder="Ej: 3"
+                                                    placeholderTextColor={COLORS.textMuted}
+                                                    keyboardType="numeric"
+                                                />
+                                            </View>
+                                            <Text style={m.hint}>Con 5 o más cambios el ciclo pasa a ser cada 100h</Text>
+                                        </View>
+                                    )}
+                                </>
+                            )}
+
                             <TouchableOpacity style={m.btn} onPress={guardar} disabled={guardando}>
                                 {guardando
                                     ? <ActivityIndicator color="#fff" />
@@ -369,6 +457,15 @@ const m = StyleSheet.create({
     selectorSub:        { fontSize: 10, color: 'rgba(255,255,255,0.3)', marginTop: 2 },
     emptyBox:           { flexDirection: 'row', alignItems: 'center', gap: 8, padding: 12, backgroundColor: 'rgba(255,159,67,0.08)', borderRadius: 10, borderWidth: 1, borderColor: 'rgba(255,159,67,0.2)' },
     emptyBoxText:       { fontSize: 12, color: COLORS.textMuted },
+    toggleRow:          { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 12, padding: 14, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' },
+    toggleInfo:         { flex: 1, gap: 4 },
+    toggleTitle:        { fontSize: 14, fontWeight: '700', color: COLORS.textPrimary },
+    toggleSub:          { fontSize: 12, color: COLORS.textMuted },
+    toggle:             { width: 44, height: 26, borderRadius: 13, backgroundColor: 'rgba(255,255,255,0.1)', padding: 3, justifyContent: 'center', marginLeft: 12 },
+    toggleActive:       { backgroundColor: COLORS.primary },
+    toggleThumb:        { width: 20, height: 20, borderRadius: 10, backgroundColor: '#fff', alignSelf: 'flex-start' },
+    toggleThumbActive:  { alignSelf: 'flex-end' },
+    hint:               { fontSize: 11, color: COLORS.textMuted, marginTop: 6, paddingHorizontal: 4 },
     btn:                { backgroundColor: COLORS.primary, borderRadius: 14, paddingVertical: 15, alignItems: 'center', marginTop: 8 },
     btnText:            { color: '#fff', fontWeight: '800', fontSize: 15 },
 });
