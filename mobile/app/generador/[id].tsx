@@ -12,24 +12,33 @@ import { COLORS } from '@/assets/styles/colors';
 import { ModalCambioAceite }        from '@/components/generadores/ModalCambioAceite';
 import { ModalLlenarGasolina }       from '@/components/generadores/ModalLlenarGasolina';
 import { ModalCalendarioAgendados }  from '@/components/generadores/ModalCalendarioAgendados';
-import { ModalManualGenerador }  from '@/components/generadores/ModalManual';
+import { ModalManualGenerador }      from '@/components/generadores/ModalManual';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
 interface Generador {
-    idGenerador:           number;
-    genId:                 string;
-    estado:                string;
-    horasTotales:          number;
-    gasolinaActualLitros:  string;
-    encendidoEn:           string | null;
-    nodo:                  string;
-    modelo:                string;
-    marca:                 string;
-    capacidadGasolina:     string;
-    intervaloCambioAceite: number;
-    intervaloRecarga:      number;
-    consumoGasolinaHoras:  string;
+    idGenerador:            number;
+    genId:                  string;
+    estado:                 string;
+    horasTotales:           number;
+    gasolinaActualLitros:   string;
+    encendidoEn:            string | null;
+    nodo:                   string;
+    modelo:                 string;
+    marca:                  string;
+    capacidadGasolina:      string;
+    consumoGasolinaHoras:   string;
+    esNuevo:                boolean;
+    cambiosAceiteIniciales: number;
+}
+
+// ── Lógica de aceite (igual que el polling) ───────────────────────────────────
+const UMBRALES_ACEITE_NUEVO   = [10, 25, 50, 75, 100];
+const INTERVALO_ACEITE_NORMAL = 100;
+
+function umbralAceite(esNuevo: boolean, cambiosIniciales: number): number {
+    if (!esNuevo) return INTERVALO_ACEITE_NORMAL;
+    return UMBRALES_ACEITE_NUEVO[cambiosIniciales] ?? INTERVALO_ACEITE_NORMAL;
 }
 
 const calcularHoras = (horasTotalesSegundos: number, encendidoEn: string | null): string => {
@@ -73,15 +82,13 @@ export default function GeneradorDetalle() {
     const [modalCalendario,         setModalCalendario]         = useState(false);
     const [segundosTotalesActuales, setSegundosTotalesActuales] = useState(0);
     const [horasParaModal,          setHorasParaModal]          = useState(0);
-
-    const [modalManual, setModalManual] = useState(false);
+    const [modalManual,             setModalManual]             = useState(false);
 
     const timerRef         = useRef<ReturnType<typeof setInterval> | null>(null);
     const alertaLanzadaRef = useRef(false);
     const congeladoRef     = useRef(false);
     const generadorRef     = useRef<Generador | null>(null);
 
-    // ── Permisos derivados del rol ────────────────────────────────────────────
     const esAdmin            = usuario?.isAdmin;
     const rol                = usuario?.rol;
     const puedeAbastecer     = esAdmin || rol === 'tecnico_abastecimiento';
@@ -196,33 +203,17 @@ export default function GeneradorDetalle() {
                                 : { idGenerador: generador.idGenerador, tipoInicio: 'manual' };
 
                             if (!corriendo) {
-                                const nuevo = {
-                                    ...generador,
-                                    estado:      'corriendo',
-                                    encendidoEn: new Date().toISOString(),
-                                };
-                                setGenerador(nuevo);
+                                setGenerador({ ...generador, estado: 'corriendo', encendidoEn: new Date().toISOString() });
                                 iniciarTimer();
                             } else {
-                                if (timerRef.current) {
-                                    clearInterval(timerRef.current);
-                                    timerRef.current = null;
-                                }
-                                const ahora              = Date.now();
-                                const inicio             = new Date(generador.encendidoEn!).getTime();
-                                const sesionSegundos     = Math.floor((ahora - inicio) / 1000);
+                                if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+                                const sesionSegundos     = Math.floor((Date.now() - new Date(generador.encendidoEn!).getTime()) / 1000);
                                 const nuevasHorasTotales = generador.horasTotales + sesionSegundos;
-                                setGenerador(prev => prev
-                                    ? { ...prev, estado: 'apagado', encendidoEn: null, horasTotales: nuevasHorasTotales }
-                                    : prev
-                                );
+                                setGenerador(prev => prev ? { ...prev, estado: 'apagado', encendidoEn: null, horasTotales: nuevasHorasTotales } : prev);
                                 setHorasActivo(calcularHoras(nuevasHorasTotales, null));
                             }
 
-                            const res  = await fetchConAuth(`${API_URL}${endpoint}`, {
-                                method: 'POST',
-                                body:   JSON.stringify(body),
-                            });
+                            const res  = await fetchConAuth(`${API_URL}${endpoint}`, { method: 'POST', body: JSON.stringify(body) });
                             const json = await res.json();
                             if (!res.ok) throw new Error(json.error);
 
@@ -301,20 +292,24 @@ export default function GeneradorDetalle() {
         );
     }
 
-    const corriendo      = generador.estado === 'corriendo';
-    const capacidad      = parseFloat(generador.capacidadGasolina);
-    const gasolinaPct    = Math.min((gasolinaActual / capacidad) * 100, 100);
-    const horasTotales   = generador.horasTotales / 3600;
-    const proximoAceite  = generador.intervaloCambioAceite - (horasTotales % generador.intervaloCambioAceite);
-    const mitadCapacidad  = capacidad * 0.5;
-    const proximaRecarga  = gasolinaActual > mitadCapacidad
+    const corriendo     = generador.estado === 'corriendo';
+    const capacidad     = parseFloat(generador.capacidadGasolina);
+    const gasolinaPct   = Math.min((gasolinaActual / capacidad) * 100, 100);
+    const horasTotales  = generador.horasTotales / 3600;
+    const nivelCritico  = gasolinaPct < 25;
+    const nivelMedio    = gasolinaPct >= 25 && gasolinaPct < 60;
+    const sinGasolina   = gasolinaActual <= 0;
+
+    // ── Próximo cambio de aceite (misma lógica que el polling) ────────────────
+    const umbral        = umbralAceite(generador.esNuevo, generador.cambiosAceiteIniciales);
+    const horasDesde    = generador.esNuevo ? horasTotales : horasTotales % INTERVALO_ACEITE_NORMAL;
+    const proximoAceite = Math.max(0, umbral - horasDesde);
+
+    const mitadCapacidad = capacidad * 0.5;
+    const proximaRecarga = gasolinaActual > mitadCapacidad
         ? (gasolinaActual - mitadCapacidad) / parseFloat(generador.consumoGasolinaHoras)
         : 0;
-    const nivelCritico   = gasolinaPct < 25;
-    const nivelMedio     = gasolinaPct >= 25 && gasolinaPct < 60;
-    const sinGasolina    = gasolinaActual <= 0;
 
-    // ── Colores dinámicos ─────────────────────────────────────────────────────
     const estadoColor       = corriendo ? '#00e5a0' : '#c8e06a';
     const estadoBorderColor = corriendo ? 'rgba(0,229,160,0.3)'  : 'rgba(200,224,106,0.25)';
     const estadoBadgeBg     = corriendo ? 'rgba(0,229,160,0.1)'  : 'rgba(200,224,106,0.1)';
@@ -328,13 +323,9 @@ export default function GeneradorDetalle() {
     const accionColors: [string, string] = corriendo
         ? ['rgba(0,229,160,0.18)', 'rgba(0,229,160,0.06)']
         : ['rgba(200,224,106,0.15)', 'rgba(200,224,106,0.05)'];
-
-    // ── Colores para estado bloqueado por permiso (igual que sin gasolina) ────
     const bloqueadoColors: [string, string] = ['rgba(80,80,80,0.18)', 'rgba(80,80,80,0.06)'];
     const bloqueadoBorder  = 'rgba(120,120,120,0.25)';
     const bloqueadoColor   = '#555';
-
-    // Toggle: deshabilitado si sin gasolina+apagado O si no tiene permiso remoto
     const toggleBloqueadoSinGasolina = sinGasolina && !corriendo;
     const toggleDeshabilitado        = accionando || toggleBloqueadoSinGasolina || !puedeManejarRemoto;
     const toggleColors: [string, string] = !puedeManejarRemoto
@@ -350,7 +341,6 @@ export default function GeneradorDetalle() {
             <ImageBackground source={require('@/assets/images/bg-login.png')} style={StyleSheet.absoluteFill} resizeMode="cover" />
             <View style={styles.overlay} />
 
-            {/* ── Header ── */}
             <View style={styles.header}>
                 <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
                     <Ionicons name="arrow-back" size={20} color={COLORS.textPrimary} />
@@ -359,30 +349,16 @@ export default function GeneradorDetalle() {
                     <Text style={styles.headerTitle}>{generador.genId}</Text>
                     <Text style={styles.headerSub}>{generador.marca}</Text>
                 </View>
-
-                {/* Botón calendario: visible siempre, gris si no tiene permiso */}
                 <TouchableOpacity
-                    style={[
-                        styles.calendarBtn,
-                        !puedeManejarRemoto && styles.calendarBtnBloqueado,
-                    ]}
+                    style={[styles.calendarBtn, !puedeManejarRemoto && styles.calendarBtnBloqueado]}
                     onPress={() => puedeManejarRemoto && setModalCalendario(true)}
                     activeOpacity={puedeManejarRemoto ? 0.8 : 1}
                 >
-                    <Ionicons
-                        name="calendar-outline"
-                        size={20}
-                        color={puedeManejarRemoto ? '#A78BFA' : bloqueadoColor}
-                    />
+                    <Ionicons name="calendar-outline" size={20} color={puedeManejarRemoto ? '#A78BFA' : bloqueadoColor} />
                 </TouchableOpacity>
-
-                <TouchableOpacity
-                    style={styles.manualBtn}
-                    onPress={() => setModalManual(true)}
-                >
+                <TouchableOpacity style={styles.manualBtn} onPress={() => setModalManual(true)}>
                     <Ionicons name="book-outline" size={20} color="#7C9EF8" />
                 </TouchableOpacity>
-
             </View>
 
             <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
@@ -417,19 +393,10 @@ export default function GeneradorDetalle() {
 
                 <View style={styles.grid}>
                     {[
-                        { icon: 'location-outline',      label: 'Location',         value: generador.nodo,                                                               color: COLORS.primaryBright },
-                        { icon: 'hardware-chip-outline', label: 'Modelo',           value: generador.modelo,                                                             color: COLORS.textSecondary },
-                        { icon: 'water-outline',         label: 'Cambio de aceite', value: `En ${proximoAceite.toFixed(0)} horas`,                                      color: '#c8e06a' },
-                        { 
-                            icon: 'flash-outline', 
-                            label: 'Próxima recarga', 
-                            value: sinGasolina 
-                                ? 'Recarga necesaria' 
-                                : proximaRecarga <= 0 
-                                    ? '¡Recarga ahora!' 
-                                    : `En ${proximaRecarga.toFixed(1)} horas`, 
-                            color: sinGasolina || proximaRecarga <= 0 ? '#ff4757' : COLORS.primaryBright 
-                        },
+                        { icon: 'location-outline',      label: 'Location',         value: generador.nodo,                                                                                        color: COLORS.primaryBright },
+                        { icon: 'hardware-chip-outline', label: 'Modelo',           value: generador.modelo,                                                                                      color: COLORS.textSecondary },
+                        { icon: 'water-outline',         label: 'Cambio de aceite', value: proximoAceite <= 0 ? '¡Cambio ahora!' : `En ${proximoAceite.toFixed(0)} horas`,                       color: proximoAceite <= 0 ? '#ff4757' : '#c8e06a' },
+                        { icon: 'flash-outline',         label: 'Próxima recarga',  value: sinGasolina ? 'Recarga necesaria' : proximaRecarga <= 0 ? '¡Recarga ahora!' : `En ${proximaRecarga.toFixed(1)} horas`, color: sinGasolina || proximaRecarga <= 0 ? '#ff4757' : COLORS.primaryBright },
                     ].map((item, i) => (
                         <View key={i} style={styles.gridItem}>
                             <Ionicons name={item.icon as any} size={14} color={item.color} />
@@ -439,46 +406,22 @@ export default function GeneradorDetalle() {
                     ))}
                 </View>
 
-                {/* ── Botón encender/apagar — siempre visible, gris si sin permiso ── */}
                 <TouchableOpacity
-                    style={[
-                        styles.toggleBtn,
-                        (toggleBloqueadoSinGasolina || !puedeManejarRemoto) && styles.toggleBtnDisabled,
-                    ]}
+                    style={[styles.toggleBtn, (toggleBloqueadoSinGasolina || !puedeManejarRemoto) && styles.toggleBtnDisabled]}
                     onPress={handleToggle}
                     disabled={toggleDeshabilitado}
                     activeOpacity={0.85}
                 >
-                    <LinearGradient
-                        colors={toggleColors}
-                        start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
-                        style={styles.toggleGradient}
-                    >
+                    <LinearGradient colors={toggleColors} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.toggleGradient}>
                         {accionando
                             ? <ActivityIndicator color="#fff" />
                             : <>
                                 <Ionicons
-                                    name={
-                                        !puedeManejarRemoto
-                                            ? 'lock-closed-outline'
-                                            : toggleBloqueadoSinGasolina
-                                                ? 'ban-outline'
-                                                : corriendo
-                                                    ? 'stop-outline'
-                                                    : 'play-outline'
-                                    }
-                                    size={20}
-                                    color="#fff"
+                                    name={!puedeManejarRemoto ? 'lock-closed-outline' : toggleBloqueadoSinGasolina ? 'ban-outline' : corriendo ? 'stop-outline' : 'play-outline'}
+                                    size={20} color="#fff"
                                 />
                                 <Text style={styles.toggleText}>
-                                    {!puedeManejarRemoto
-                                        ? 'Sin permiso'
-                                        : toggleBloqueadoSinGasolina
-                                            ? 'Sin gasolina — no disponible'
-                                            : corriendo
-                                                ? 'Parar generador'
-                                                : 'Iniciar generador'
-                                    }
+                                    {!puedeManejarRemoto ? 'Sin permiso' : toggleBloqueadoSinGasolina ? 'Sin gasolina — no disponible' : corriendo ? 'Parar generador' : 'Iniciar generador'}
                                 </Text>
                               </>
                         }
@@ -511,75 +454,33 @@ export default function GeneradorDetalle() {
                     </View>
 
                     <View style={styles.acciones}>
-
-                        {/* Cambio de aceite — gris si no puede abastecer */}
                         <TouchableOpacity
-                            style={[
-                                styles.accionBtn,
-                                { borderColor: puedeAbastecer ? accionBorder : bloqueadoBorder },
-                            ]}
-                            onPress={() => {
-                                if (!puedeAbastecer) return;
-                                setHorasParaModal(segundosTotalesActuales);
-                                setModalAceite(true);
-                            }}
+                            style={[styles.accionBtn, { borderColor: puedeAbastecer ? accionBorder : bloqueadoBorder }]}
+                            onPress={() => { if (!puedeAbastecer) return; setHorasParaModal(segundosTotalesActuales); setModalAceite(true); }}
                             activeOpacity={puedeAbastecer ? 0.8 : 1}
                         >
-                            <LinearGradient
-                                colors={puedeAbastecer ? accionColors : bloqueadoColors}
-                                style={styles.accionGradient}
-                            >
-                                <Ionicons
-                                    name={puedeAbastecer ? 'water-outline' : 'lock-closed-outline'}
-                                    size={18}
-                                    color={puedeAbastecer ? accionColor : bloqueadoColor}
-                                />
-                                <Text style={[styles.accionText, { color: puedeAbastecer ? accionColor : bloqueadoColor }]}>
-                                    Cambio de aceite
-                                </Text>
+                            <LinearGradient colors={puedeAbastecer ? accionColors : bloqueadoColors} style={styles.accionGradient}>
+                                <Ionicons name={puedeAbastecer ? 'water-outline' : 'lock-closed-outline'} size={18} color={puedeAbastecer ? accionColor : bloqueadoColor} />
+                                <Text style={[styles.accionText, { color: puedeAbastecer ? accionColor : bloqueadoColor }]}>Cambio de aceite</Text>
                             </LinearGradient>
                         </TouchableOpacity>
 
-                        {/* Llenar gasolina — gris si no puede abastecer */}
                         <TouchableOpacity
-                            style={[
-                                styles.accionBtn,
-                                {
-                                    borderColor: !puedeAbastecer
-                                        ? bloqueadoBorder
-                                        : sinGasolina
-                                            ? 'rgba(255,71,87,0.5)'
-                                            : accionBorder,
-                                },
-                            ]}
+                            style={[styles.accionBtn, { borderColor: !puedeAbastecer ? bloqueadoBorder : sinGasolina ? 'rgba(255,71,87,0.5)' : accionBorder }]}
                             onPress={() => puedeAbastecer && setModalGasolina(true)}
                             activeOpacity={puedeAbastecer ? 0.8 : 1}
                         >
                             <LinearGradient
-                                colors={
-                                    !puedeAbastecer
-                                        ? bloqueadoColors
-                                        : sinGasolina
-                                            ? ['rgba(255,71,87,0.2)', 'rgba(255,71,87,0.08)']
-                                            : accionColors
-                                }
+                                colors={!puedeAbastecer ? bloqueadoColors : sinGasolina ? ['rgba(255,71,87,0.2)', 'rgba(255,71,87,0.08)'] : accionColors}
                                 style={styles.accionGradient}
                             >
-                                <Ionicons
-                                    name={!puedeAbastecer ? 'lock-closed-outline' : 'flash-outline'}
-                                    size={18}
-                                    color={!puedeAbastecer ? bloqueadoColor : sinGasolina ? '#ff4757' : accionColor}
-                                />
-                                <Text style={[
-                                    styles.accionText,
-                                    { color: !puedeAbastecer ? bloqueadoColor : sinGasolina ? '#ff4757' : accionColor },
-                                ]}>
+                                <Ionicons name={!puedeAbastecer ? 'lock-closed-outline' : 'flash-outline'} size={18} color={!puedeAbastecer ? bloqueadoColor : sinGasolina ? '#ff4757' : accionColor} />
+                                <Text style={[styles.accionText, { color: !puedeAbastecer ? bloqueadoColor : sinGasolina ? '#ff4757' : accionColor }]}>
                                     {!puedeAbastecer ? 'Llenar gasolina' : sinGasolina ? '¡Llenar gasolina!' : 'Llenar gasolina'}
                                 </Text>
                             </LinearGradient>
                         </TouchableOpacity>
 
-                        {/* Reporte — todos los roles */}
                         <TouchableOpacity
                             style={[styles.accionBtn, { borderColor: accionBorder }]}
                             onPress={() => router.push(`/generador/reporte/${generador.idGenerador}?genId=${generador.genId}` as any)}
@@ -590,7 +491,6 @@ export default function GeneradorDetalle() {
                                 <Text style={[styles.accionText, { color: accionColor }]}>Reporte</Text>
                             </LinearGradient>
                         </TouchableOpacity>
-
                     </View>
                 </View>
 
@@ -607,16 +507,8 @@ export default function GeneradorDetalle() {
                         <Text style={styles.alertMsg}>
                             El generador {generador.genId} se ha quedado sin gasolina. Es necesario recargar antes de continuar operando.
                         </Text>
-                        <TouchableOpacity
-                            style={styles.alertBtn}
-                            onPress={() => {
-                                setAlertaGasolina(false);
-                                if (puedeAbastecer) setModalGasolina(true);
-                            }}
-                        >
-                            <Text style={styles.alertBtnText}>
-                                {puedeAbastecer ? 'Llenar gasolina ahora' : 'Entendido'}
-                            </Text>
+                        <TouchableOpacity style={styles.alertBtn} onPress={() => { setAlertaGasolina(false); if (puedeAbastecer) setModalGasolina(true); }}>
+                            <Text style={styles.alertBtnText}>{puedeAbastecer ? 'Llenar gasolina ahora' : 'Entendido'}</Text>
                         </TouchableOpacity>
                         <TouchableOpacity style={styles.alertBtnSecondary} onPress={() => setAlertaGasolina(false)}>
                             <Text style={styles.alertBtnSecondaryText}>Cerrar</Text>
@@ -625,11 +517,11 @@ export default function GeneradorDetalle() {
                 </View>
             )}
 
-            {/* Modales — solo se montan si tiene permiso */}
             {puedeAbastecer && (
                 <ModalCambioAceite
                     visible={modalAceite}
                     horasTotales={horasParaModal}
+                    genId={generador.genId}
                     onClose={() => setModalAceite(false)}
                     onConfirmar={handleRegistrarAceite}
                     fetchConAuth={fetchConAuth}
@@ -641,6 +533,7 @@ export default function GeneradorDetalle() {
                     horasTotales={segundosTotalesActuales}
                     gasolinaActual={gasolinaActual}
                     capacidad={capacidad}
+                    genId={generador.genId}
                     onClose={() => setModalGasolina(false)}
                     onConfirmar={handleRegistrarGasolina}
                     fetchConAuth={fetchConAuth}
@@ -654,7 +547,6 @@ export default function GeneradorDetalle() {
                     genId={generador.genId}
                 />
             )}
-
             <ModalManualGenerador
                 visible={modalManual}
                 onClose={() => setModalManual(false)}
@@ -719,10 +611,5 @@ const styles = StyleSheet.create({
     alertBtnText:         { color: '#fff', fontWeight: '700', fontSize: 16 },
     alertBtnSecondary:    { paddingVertical: 12, borderRadius: 12, alignItems: 'center', width: '100%', borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)' },
     alertBtnSecondaryText:{ color: COLORS.textSecondary, fontWeight: '600', fontSize: 14 },
-    manualBtn: {
-        width: 40, height: 40, borderRadius: 12,
-        backgroundColor: 'rgba(124,158,248,0.1)',
-        alignItems: 'center', justifyContent: 'center',
-        borderWidth: 1, borderColor: 'rgba(124,158,248,0.25)'
-    },
+    manualBtn:            { width: 40, height: 40, borderRadius: 12, backgroundColor: 'rgba(124,158,248,0.1)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(124,158,248,0.25)' },
 });

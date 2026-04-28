@@ -65,9 +65,10 @@ router.get('/corriendo', verificarToken, async (req, res) => {
             modelo:                schema.generadoresModelos.nombre,
             marca:                 schema.generadoresModelos.marca,
             capacidadGasolina:     schema.generadoresModelos.capacidadGasolina,
-            intervaloCambioAceite: schema.generadoresModelos.intervaloCambioAceite,
             consumoGasolinaHoras:  schema.generadoresModelos.consumoGasolinaHoras,
             imagenUrl:             schema.generadoresModelos.image_url,
+            esNuevo:                schema.generadores.esNuevo,                
+            cambiosAceiteIniciales: schema.generadores.cambiosAceiteIniciales,
         })
         .from(schema.generadores)
         .innerJoin(schema.nodos,              eq(schema.generadores.idNodo,   schema.nodos.idNodo))
@@ -124,18 +125,20 @@ router.get('/:id', verificarToken, async (req, res) => {
         const { id } = req.params;
 
         const data = await db.select({
-            idGenerador:          schema.generadores.idGenerador,
-            genId:                schema.generadores.genId,
-            estado:               schema.generadores.estado,
-            horasTotales:         schema.generadores.horasTotales,
-            gasolinaActualLitros: schema.generadores.gasolinaActualLitros,
-            encendidoEn:          schema.generadores.encendidoEn,
-            nodo:                 schema.nodos.nombre,
-            modelo:               schema.generadoresModelos.nombre,
-            marca:                schema.generadoresModelos.marca,
-            capacidadGasolina:    schema.generadoresModelos.capacidadGasolina,
-            intervaloCambioAceite: schema.generadoresModelos.intervaloCambioAceite,
-            consumoGasolinaHoras: schema.generadoresModelos.consumoGasolinaHoras,
+            idGenerador:            schema.generadores.idGenerador,
+            genId:                  schema.generadores.genId,
+            estado:                 schema.generadores.estado,
+            horasTotales:           schema.generadores.horasTotales,
+            gasolinaActualLitros:   schema.generadores.gasolinaActualLitros,
+            encendidoEn:            schema.generadores.encendidoEn,
+            esNuevo:                schema.generadores.esNuevo,               // ← nuevo
+            cambiosAceiteIniciales: schema.generadores.cambiosAceiteIniciales, // ← nuevo
+            nodo:                   schema.nodos.nombre,
+            modelo:                 schema.generadoresModelos.nombre,
+            marca:                  schema.generadoresModelos.marca,
+            capacidadGasolina:      schema.generadoresModelos.capacidadGasolina,
+            consumoGasolinaHoras:   schema.generadoresModelos.consumoGasolinaHoras,
+            // ← sin intervaloCambioAceite
         })
         .from(schema.generadores)
         .innerJoin(schema.nodos,              eq(schema.generadores.idNodo,   schema.nodos.idNodo))

@@ -13,6 +13,13 @@ import { useData } from '@/provider/DataProvider';
 const { width }  = Dimensions.get('window');
 const CARD_WIDTH = width - 40;
 const SNAP_WIDTH = CARD_WIDTH + 16;
+const UMBRALES_ACEITE_NUEVO   = [10, 25, 50, 75, 100];
+const INTERVALO_ACEITE_NORMAL = 100;
+
+function umbralAceite(esNuevo: boolean, cambiosIniciales: number): number {
+    if (!esNuevo) return INTERVALO_ACEITE_NORMAL;
+    return UMBRALES_ACEITE_NUEVO[cambiosIniciales] ?? INTERVALO_ACEITE_NORMAL;
+}
 
 interface Generador {
     idGenerador:           number;
@@ -26,9 +33,10 @@ interface Generador {
     modelo:                string;
     marca:                 string;
     capacidadGasolina:     string;
-    intervaloCambioAceite: number;
     consumoGasolinaHoras:  string;
     imagenUrl:             string | null;
+    esNuevo:                boolean;            
+    cambiosAceiteIniciales: number;
 }
 
 /* ── Reloj incluyendo horas acumuladas ── */
@@ -170,7 +178,9 @@ function GeneradorCard({ gen }: { gen: Generador }) {
     const capacidad      = parseFloat(gen.capacidadGasolina);
     const gasolinaPct    = Math.min((gasolinaLitros / capacidad) * 100, 100);
     const horasTotalesH  = gen.horasTotales / 3600;
-    const proximoAceite  = gen.intervaloCambioAceite - (horasTotalesH % gen.intervaloCambioAceite);
+    const umbral        = umbralAceite(gen.esNuevo, gen.cambiosAceiteIniciales);
+    const horasDesde    = gen.esNuevo ? horasTotalesH : horasTotalesH % INTERVALO_ACEITE_NORMAL;
+    const proximoAceite = Math.max(0, umbral - horasDesde);
     const nivelCritico   = gasolinaPct < 25;
     const nivelMedio     = gasolinaPct >= 25 && gasolinaPct < 60;
     const horasRestantes = gasolinaLitros / parseFloat(gen.consumoGasolinaHoras);

@@ -17,30 +17,28 @@ interface Modelo {
     marca:                 string;
     capacidadGasolina:     string;
     consumoGasolinaHoras:  string;
-    intervaloCambioAceite: number;
     descripcion:           string | null;
     image_url:             string | null;
 }
 
 const FORM_VACIO = {
-    nombre: '', marca: '', capacidadGasolina: '', consumoGasolinaHoras: '',
-    intervaloCambioAceite: '', descripcion: '',
+    nombre: '', marca: '', capacidadGasolina: '', consumoGasolinaHoras: '', descripcion: '',
 };
 
 export default function AdminModelos() {
     const { fetchConAuth } = useAuth();
     const router           = useRouter();
 
-    const [modelos,    setModelos]    = useState<Modelo[]>([]);
-    const [loading,    setLoading]    = useState(true);
-    const [modal,      setModal]      = useState(false);
-    const [editando,   setEditando]   = useState<Modelo | null>(null);
-    const [form,       setForm]       = useState(FORM_VACIO);
-    const [imagen,     setImagen]     = useState<string | null>(null);  // URI local
-    const [imagenUrl,  setImagenUrl]  = useState<string | null>(null);  // URL existente al editar
-    const [uploading,  setUploading]  = useState(false);
-    const [guardando,  setGuardando]  = useState(false);
-    const [busqueda,   setBusqueda]   = useState('');
+    const [modelos,   setModelos]   = useState<Modelo[]>([]);
+    const [loading,   setLoading]   = useState(true);
+    const [modal,     setModal]     = useState(false);
+    const [editando,  setEditando]  = useState<Modelo | null>(null);
+    const [form,      setForm]      = useState(FORM_VACIO);
+    const [imagen,    setImagen]    = useState<string | null>(null);  // URI local
+    const [imagenUrl, setImagenUrl] = useState<string | null>(null);  // URL existente al editar
+    const [uploading, setUploading] = useState(false);
+    const [guardando, setGuardando] = useState(false);
+    const [busqueda,  setBusqueda]  = useState('');
 
     const cargar = async () => {
         try {
@@ -68,7 +66,6 @@ export default function AdminModelos() {
             marca:                 mod.marca,
             capacidadGasolina:     mod.capacidadGasolina,
             consumoGasolinaHoras:  mod.consumoGasolinaHoras,
-            intervaloCambioAceite: String(mod.intervaloCambioAceite),
             descripcion:           mod.descripcion ?? '',
         });
         setImagen(null);
@@ -78,45 +75,39 @@ export default function AdminModelos() {
 
     const seleccionarImagen = async () => {
         const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-        if (status !== 'granted') {
-            Alert.alert('Permiso requerido', 'Necesitamos acceso a tu galería');
-            return;
-        }
+        if (status !== 'granted') { Alert.alert('Permiso requerido', 'Necesitamos acceso a tu galería'); return; }
         const result = await ImagePicker.launchImageLibraryAsync({
             mediaTypes: ImagePicker.MediaTypeOptions.Images,
             quality:    0.7,
         });
         if (!result.canceled) {
             setImagen(result.assets[0].uri);
-            setImagenUrl(null); // descarta la URL previa si selecciona nueva imagen
+            setImagenUrl(null); // descarta URL previa si selecciona nueva imagen
         }
     };
 
+    // ── Subida al servidor propio ─────────────────────────────────────────────
     const subirImagen = async (uri: string): Promise<string> => {
-        const firmaRes  = await fetchConAuth(`${API_URL}/api/cloudinary/firma`);
-        const firmaJson = await firmaRes.json();
-        if (!firmaJson.success) throw new Error('Error obteniendo firma');
-
-        const { timestamp, signature, folder, cloud_name, api_key } = firmaJson.data;
-
         const formData = new FormData();
-        formData.append('file',      { uri, type: 'image/jpeg', name: 'modelo.jpg' } as any);
-        formData.append('timestamp', timestamp.toString());
-        formData.append('signature', signature);
-        formData.append('folder',    folder);
-        formData.append('api_key',   api_key);
+        formData.append('file', { uri, type: 'image/jpeg', name: 'modelo.jpg' } as any);
 
-        const uploadRes  = await fetch(
-            `https://api.cloudinary.com/v1_1/${cloud_name}/image/upload`,
+        const params = new URLSearchParams({
+            folder: 'generadores',
+            genId:  form.nombre.replace(/\s+/g, '_') || 'modelo',
+            tipo:   'modelo',
+        });
+
+        const res  = await fetchConAuth(
+            `${API_URL}/api/images/upload?${params}`,
             { method: 'POST', body: formData }
         );
-        const uploadJson = await uploadRes.json();
-        if (!uploadJson.secure_url) throw new Error('Error subiendo imagen');
-        return uploadJson.secure_url;
+        const json = await res.json();
+        if (!json.success) throw new Error(json.error ?? 'Error subiendo imagen');
+        return json.data.url;
     };
 
     const guardar = async () => {
-        if (!form.nombre || !form.marca || !form.capacidadGasolina || !form.consumoGasolinaHoras || !form.intervaloCambioAceite) {
+        if (!form.nombre || !form.marca || !form.capacidadGasolina || !form.consumoGasolinaHoras) {
             return Alert.alert('Error', 'Completa todos los campos requeridos');
         }
         setGuardando(true);
@@ -134,7 +125,6 @@ export default function AdminModelos() {
                 marca:                 form.marca,
                 capacidadGasolina:     parseFloat(form.capacidadGasolina),
                 consumoGasolinaHoras:  parseFloat(form.consumoGasolinaHoras),
-                intervaloCambioAceite: parseInt(form.intervaloCambioAceite),
                 descripcion:           form.descripcion || null,
                 imagenUrl:             finalImagenUrl,
             };
@@ -173,12 +163,11 @@ export default function AdminModelos() {
     );
 
     const campos = [
-        { label: 'Nombre del modelo *',         key: 'nombre',                placeholder: 'Porten 6500W', numeric: false, icon: 'hardware-chip-outline' },
-        { label: 'Marca *',                      key: 'marca',                 placeholder: 'Porten',       numeric: false, icon: 'business-outline' },
-        { label: 'Capacidad gasolina (L) *',     key: 'capacidadGasolina',     placeholder: '25',           numeric: true,  icon: 'water-outline' },
-        { label: 'Consumo (L/hora) *',           key: 'consumoGasolinaHoras',  placeholder: '6',            numeric: true,  icon: 'speedometer-outline' },
-        { label: 'Intervalo cambio aceite (h) *',key: 'intervaloCambioAceite', placeholder: '150',          numeric: true,  icon: 'build-outline' },
-        { label: 'Descripción',                  key: 'descripcion',           placeholder: 'Opcional',     numeric: false, icon: 'document-text-outline' },
+        { label: 'Nombre del modelo *',          key: 'nombre',                placeholder: 'Porten 6500W', numeric: false, icon: 'hardware-chip-outline' },
+        { label: 'Marca *',                       key: 'marca',                 placeholder: 'Porten',       numeric: false, icon: 'business-outline' },
+        { label: 'Capacidad gasolina (L) *',      key: 'capacidadGasolina',     placeholder: '25',           numeric: true,  icon: 'water-outline' },
+        { label: 'Consumo (L/hora) *',            key: 'consumoGasolinaHoras',  placeholder: '6',            numeric: true,  icon: 'speedometer-outline' },
+        { label: 'Descripción',                   key: 'descripcion',           placeholder: 'Opcional',     numeric: false, icon: 'document-text-outline' },
     ];
 
     const imagenPreview = imagen ?? imagenUrl;
@@ -245,10 +234,7 @@ export default function AdminModelos() {
                                                 <Ionicons name="speedometer-outline" size={10} color={COLORS.textMuted} />
                                                 <Text style={s.chipText}>{mod.consumoGasolinaHoras}L/h</Text>
                                             </View>
-                                            <View style={s.chip}>
-                                                <Ionicons name="build-outline" size={10} color={COLORS.textMuted} />
-                                                <Text style={s.chipText}>{mod.intervaloCambioAceite}h</Text>
-                                            </View>
+
                                         </View>
                                     </View>
                                 </View>
@@ -356,21 +342,21 @@ const s = StyleSheet.create({
 });
 
 const m = StyleSheet.create({
-    overlay:      { flex: 1, backgroundColor: 'rgba(0,0,0,0.65)', justifyContent: 'flex-end' },
-    sheet:        { backgroundColor: '#080f28', borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: 24, paddingBottom: 48, maxHeight: '92%', borderWidth: 1, borderColor: 'rgba(21,96,218,0.3)' },
-    handle:       { width: 40, height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.15)', alignSelf: 'center', marginBottom: 20 },
-    header:       { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24 },
-    title:        { fontSize: 18, fontWeight: '800', color: COLORS.textPrimary },
-    subtitle:     { fontSize: 12, color: COLORS.textMuted, marginTop: 3 },
-    closeBtn:     { width: 32, height: 32, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.06)', alignItems: 'center', justifyContent: 'center' },
-    campo:        { marginBottom: 14 },
-    label:        { fontSize: 11, color: COLORS.textMuted, marginBottom: 8, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.8 },
-    inputRow:     { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
-    inputIcon:    { marginLeft: 12 },
-    input:        { flex: 1, padding: 13, color: COLORS.textPrimary, fontSize: 14 },
-    imagenBtn:    { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', padding: 13 },
-    imagenBtnText:{ color: COLORS.textMuted, fontSize: 14 },
-    preview:      { width: '100%', height: 160, borderRadius: 12, marginTop: 10, resizeMode: 'cover' },
-    btn:          { backgroundColor: COLORS.primary, borderRadius: 14, paddingVertical: 15, alignItems: 'center', marginTop: 8 },
-    btnText:      { color: '#fff', fontWeight: '800', fontSize: 15 },
+    overlay:       { flex: 1, backgroundColor: 'rgba(0,0,0,0.65)', justifyContent: 'flex-end' },
+    sheet:         { backgroundColor: '#080f28', borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: 24, paddingBottom: 48, maxHeight: '92%', borderWidth: 1, borderColor: 'rgba(21,96,218,0.3)' },
+    handle:        { width: 40, height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.15)', alignSelf: 'center', marginBottom: 20 },
+    header:        { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24 },
+    title:         { fontSize: 18, fontWeight: '800', color: COLORS.textPrimary },
+    subtitle:      { fontSize: 12, color: COLORS.textMuted, marginTop: 3 },
+    closeBtn:      { width: 32, height: 32, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.06)', alignItems: 'center', justifyContent: 'center' },
+    campo:         { marginBottom: 14 },
+    label:         { fontSize: 11, color: COLORS.textMuted, marginBottom: 8, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.8 },
+    inputRow:      { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
+    inputIcon:     { marginLeft: 12 },
+    input:         { flex: 1, padding: 13, color: COLORS.textPrimary, fontSize: 14 },
+    imagenBtn:     { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', padding: 13 },
+    imagenBtnText: { color: COLORS.textMuted, fontSize: 14 },
+    preview:       { width: '100%', height: 160, borderRadius: 12, marginTop: 10, resizeMode: 'cover' },
+    btn:           { backgroundColor: COLORS.primary, borderRadius: 14, paddingVertical: 15, alignItems: 'center', marginTop: 8 },
+    btnText:       { color: '#fff', fontWeight: '800', fontSize: 15 },
 });

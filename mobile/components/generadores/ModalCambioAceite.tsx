@@ -17,12 +17,14 @@ interface Paso {
 interface Props {
     visible:      boolean;
     horasTotales: number;
+    genId:        string; 
     onClose:      () => void;
     onConfirmar:  (data: { notas: string; imagenesUrl: string[]; checklistItems: Paso[] }) => Promise<void>;
     fetchConAuth: (url: string, opciones?: RequestInit) => Promise<Response>;
 }
 
-export function ModalCambioAceite({ visible, horasTotales, onClose, onConfirmar, fetchConAuth }: Props) {
+export function ModalCambioAceite({ visible, horasTotales, genId, onClose, onConfirmar, fetchConAuth }: Props) {
+
     const [notas,          setNotas]          = useState('');
     const [imagenes,       setImagenes]       = useState<string[]>([]);
     const [uploading,      setUploading]      = useState(false);
@@ -78,23 +80,26 @@ export function ModalCambioAceite({ visible, horasTotales, onClose, onConfirmar,
         setImagenes(prev => prev.filter((_, i) => i !== index));
     };
 
+    // ── Subida al servidor propio ─────────────────────────────────────────────
     const subirImagen = async (uri: string): Promise<string> => {
-        const firmaRes  = await fetchConAuth(`${process.env.EXPO_PUBLIC_API_URL}/api/cloudinary/firma`);
-        const firmaJson = await firmaRes.json();
-        if (!firmaJson.success) throw new Error('Error obteniendo firma');
-        const { timestamp, signature, folder, cloud_name, api_key } = firmaJson.data;
         const formData = new FormData();
-        formData.append('file',      { uri, type: 'image/jpeg', name: 'mantenimiento.jpg' } as any);
-        formData.append('timestamp', timestamp.toString());
-        formData.append('signature', signature);
-        formData.append('folder',    folder);
-        formData.append('api_key',   api_key);
-        const uploadRes  = await fetch(`https://api.cloudinary.com/v1_1/${cloud_name}/image/upload`, { method: 'POST', body: formData });
-        const uploadJson = await uploadRes.json();
-        if (!uploadJson.secure_url) throw new Error('Error subiendo imagen');
-        return uploadJson.secure_url;
-    };
+        formData.append('file', { uri, type: 'image/jpeg', name: 'mantenimiento.jpg' } as any);
 
+        const params = new URLSearchParams({
+            folder: 'mantenimientos/aceite',
+            genId,
+            tipo:   'aceite',
+        });
+
+        const res  = await fetchConAuth(
+            `${process.env.EXPO_PUBLIC_API_URL}/api/images/upload?${params}`,
+            { method: 'POST', body: formData }
+        );
+        const json = await res.json();
+        if (!json.success) throw new Error(json.error ?? 'Error subiendo imagen');
+        return json.data.url;
+    };
+    
     const handleConfirmar = async () => {
         try {
             setConfirmando(true);

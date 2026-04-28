@@ -126,10 +126,16 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
     const fetchConAuth = async (url: string, opciones: RequestInit = {}): Promise<Response> => {
         let accessToken = await SecureStore.getItemAsync(ACCESS_TOKEN_KEY);
-        let res = await fetch(url, {
-            ...opciones,
-            headers: { ...opciones.headers, 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-        });
+
+        const esFormData = opciones.body instanceof FormData;  // ← detectar
+
+        const headers: Record<string, string> = {
+            ...(opciones.headers as Record<string, string>),
+            'Authorization': `Bearer ${accessToken}`,
+            ...(!esFormData && { 'Content-Type': 'application/json' }), // ← solo si NO es FormData
+        };
+
+        let res = await fetch(url, { ...opciones, headers });
 
         if (res.status === 401) {
             const refreshToken = await SecureStore.getItemAsync(REFRESH_TOKEN_KEY);
@@ -144,10 +150,13 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
             const nuevoAccessToken = (await refreshRes.json()).data.accessToken;
             await SecureStore.setItemAsync(ACCESS_TOKEN_KEY, nuevoAccessToken);
-            res = await fetch(url, {
-                ...opciones,
-                headers: { ...opciones.headers, 'Authorization': `Bearer ${nuevoAccessToken}`, 'Content-Type': 'application/json' },
-            });
+
+            const headers2: Record<string, string> = {
+                ...(opciones.headers as Record<string, string>),
+                'Authorization': `Bearer ${nuevoAccessToken}`,
+                ...(!esFormData && { 'Content-Type': 'application/json' }),
+            };
+            res = await fetch(url, { ...opciones, headers: headers2 });
         }
 
         return res;

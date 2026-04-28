@@ -73,7 +73,6 @@
     marca:                 varchar("marca", { length: 50 }).notNull(),
     capacidadGasolina:     decimal("capacidad_gasolina", { precision: 8, scale: 2 }).notNull(),
     consumoGasolinaHoras:  decimal("consumo_gasolina_horas", { precision: 6, scale: 3 }).notNull(),
-    intervaloCambioAceite: integer("intervalo_cambio_aceite").notNull(),
     descripcion:           text("descripcion"),
     image_url:              varchar("imagen_url", { length: 500 }),
     manualCombustible:      jsonb("manual_combustible").default([]),

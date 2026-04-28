@@ -41,11 +41,10 @@ router.get('/:id', verificarToken, async (req, res) => {
 router.post('/', verificarToken, soloAdmin, async (req, res) => {
     try {
         const {
-            nombre, marca, capacidadGasolina, consumoGasolinaHoras,
-            intervaloCambioAceite, descripcion, imagenUrl,
+            nombre, marca, capacidadGasolina, consumoGasolinaHoras, descripcion, imagenUrl,
         } = req.body;
 
-        if (!nombre || !marca || !capacidadGasolina || !consumoGasolinaHoras || !intervaloCambioAceite ) {
+        if (!nombre || !marca || !capacidadGasolina || !consumoGasolinaHoras  ) {
             return res.status(400).json({ success: false, error: 'Faltan campos requeridos' });
         }
 
@@ -54,7 +53,6 @@ router.post('/', verificarToken, soloAdmin, async (req, res) => {
             marca,
             capacidadGasolina,
             consumoGasolinaHoras,
-            intervaloCambioAceite,
             descripcion:  descripcion  || null,
             image_url:    imagenUrl    || null,
         }).returning();
@@ -73,14 +71,12 @@ router.post('/', verificarToken, soloAdmin, async (req, res) => {
 router.put('/:id', verificarToken, soloAdmin, async (req, res) => {
     try {
         const {
-            nombre, marca, capacidadGasolina, consumoGasolinaHoras,
-            intervaloCambioAceite, descripcion, imagenUrl,
+            nombre, marca, capacidadGasolina, consumoGasolinaHoras, descripcion, imagenUrl,
         } = req.body;
 
         const data = await db.update(schema.generadoresModelos)
             .set({
                 nombre, marca, capacidadGasolina, consumoGasolinaHoras,
-                intervaloCambioAceite,
                 descripcion: descripcion || null,
                 image_url:   imagenUrl   || null,
             })

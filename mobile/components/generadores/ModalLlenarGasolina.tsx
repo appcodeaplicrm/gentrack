@@ -19,12 +19,13 @@ interface Props {
     horasTotales:   number;
     gasolinaActual: number;
     capacidad:      number;
+    genId:          string;
     onClose:        () => void;
     onConfirmar:    (data: { litros: number; notas: string; imagenesUrl: string[]; checklistItems: Paso[] }) => Promise<void>;
     fetchConAuth:   (url: string, opciones?: RequestInit) => Promise<Response>;
 }
 
-export function ModalLlenarGasolina({ visible, horasTotales, gasolinaActual, capacidad, onClose, onConfirmar, fetchConAuth }: Props) {
+export function ModalLlenarGasolina({ visible, horasTotales, gasolinaActual, capacidad, genId, onClose, onConfirmar, fetchConAuth }: Props) {
     const [litros,       setLitros]       = useState('');
     const [notas,        setNotas]        = useState('');
     const [imagenes,     setImagenes]     = useState<string[]>([]);
@@ -82,21 +83,24 @@ export function ModalLlenarGasolina({ visible, horasTotales, gasolinaActual, cap
         setImagenes(prev => prev.filter((_, i) => i !== index));
     };
 
+    // ── Subida al servidor propio ─────────────────────────────────────────────
     const subirImagen = async (uri: string): Promise<string> => {
-        const firmaRes  = await fetchConAuth(`${process.env.EXPO_PUBLIC_API_URL}/api/cloudinary/firma`);
-        const firmaJson = await firmaRes.json();
-        if (!firmaJson.success) throw new Error('Error obteniendo firma');
-        const { timestamp, signature, folder, cloud_name, api_key } = firmaJson.data;
         const formData = new FormData();
-        formData.append('file',      { uri, type: 'image/jpeg', name: 'mantenimiento.jpg' } as any);
-        formData.append('timestamp', timestamp.toString());
-        formData.append('signature', signature);
-        formData.append('folder',    folder);
-        formData.append('api_key',   api_key);
-        const uploadRes  = await fetch(`https://api.cloudinary.com/v1_1/${cloud_name}/image/upload`, { method: 'POST', body: formData });
-        const uploadJson = await uploadRes.json();
-        if (!uploadJson.secure_url) throw new Error('Error subiendo imagen');
-        return uploadJson.secure_url;
+        formData.append('file', { uri, type: 'image/jpeg', name: 'mantenimiento.jpg' } as any);
+
+        const params = new URLSearchParams({
+            folder: 'mantenimientos/gasolina',
+            genId,
+            tipo:   'gasolina',
+        });
+
+        const res  = await fetchConAuth(
+            `${process.env.EXPO_PUBLIC_API_URL}/api/images/upload?${params}`,
+            { method: 'POST', body: formData }
+        );
+        const json = await res.json();
+        if (!json.success) throw new Error(json.error ?? 'Error subiendo imagen');
+        return json.data.url;
     };
 
     const handleConfirmar = async () => {
@@ -106,21 +110,23 @@ export function ModalLlenarGasolina({ visible, horasTotales, gasolinaActual, cap
         try {
             setConfirmando(true);
             const imagenesUrl: string[] = [];
+            console.log('imagenes.length:', imagenes.length); // ← agrega esto
             if (imagenes.length > 0) {
                 setUploading(true);
                 for (const uri of imagenes) {
+                    console.log('subiendo:', uri);
                     const url = await subirImagen(uri);
+                    console.log('url obtenida:', url);
                     imagenesUrl.push(url);
                 }
                 setUploading(false);
             }
+            console.log('llamando onConfirmar con:', { litros: l, imagenesUrl }); // ← y esto
             await onConfirmar({ litros: l, notas, imagenesUrl, checklistItems: pasos });
-            setLitros('');
-            setNotas('');
-            setImagenes([]);
-            setPasos([]);
+            // ...
         } catch (err: any) {
-            Alert.alert('Error', err.message);
+            console.log('ERROR COMPLETO:', JSON.stringify(err), err?.message, err?.stack);
+            Alert.alert('Error', err?.message ?? 'Error desconocido');
         } finally {
             setConfirmando(false);
         }
