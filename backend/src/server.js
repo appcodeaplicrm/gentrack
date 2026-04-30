@@ -33,7 +33,7 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-job.start
+job.start()
 
 app.use(cors());
 app.use(express.json());
@@ -65,7 +65,7 @@ app.use('/images', express.static('images'));
 
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`GenTrack API corriendo en puerto ${PORT}`);
-    //iniciarMonitoreoGasolina();
+    iniciarMonitoreoGasolina();
     iniciarPollingMantenimientos(); 
     iniciarPollingCorrida();
     iniciarPollingGasolinaCritica();
