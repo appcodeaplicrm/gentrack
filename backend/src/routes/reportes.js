@@ -6,7 +6,6 @@ import { verificarToken } from '../middleware/auth.js';
 
 const router = Router();
 
-// Todos los tipos de mantenimiento soportados
 const TIPOS_MANTENIMIENTO = [
     'gasolina',
     'aceite',
@@ -106,21 +105,20 @@ router.post('/generar', verificarToken, async (req, res) => {
         // ── 1. Generador + nodo + modelo ─────────────────────────────────────
         const [gen] = await db
             .select({
-                idGenerador:           schema.generadores.idGenerador,
-                genId:                 schema.generadores.genId,
-                estado:                schema.generadores.estado,
-                horasTotalesAcum:      schema.generadores.horasTotales,
-                gasolinaActualLitros:  schema.generadores.gasolinaActualLitros,
-                creadoEn:              schema.generadores.createdAt,
-                nombreNodo:            schema.nodos.nombre,
-                ubicacion:             schema.nodos.ubicacion,
-                descripcionNodo:       schema.nodos.descripcion,
-                nombreModelo:          schema.generadoresModelos.nombre,
-                marca:                 schema.generadoresModelos.marca,
-                capacidadGasolina:     schema.generadoresModelos.capacidadGasolina,
-                consumoGasolinaHoras:  schema.generadoresModelos.consumoGasolinaHoras,
-                intervaloCambioAceite: schema.generadoresModelos.intervaloCambioAceite,
-                descripcionModelo:     schema.generadoresModelos.descripcion,
+                idGenerador:          schema.generadores.idGenerador,
+                genId:                schema.generadores.genId,
+                estado:               schema.generadores.estado,
+                horasTotalesAcum:     schema.generadores.horasTotales,
+                gasolinaActualLitros: schema.generadores.gasolinaActualLitros,
+                creadoEn:             schema.generadores.createdAt,
+                nombreNodo:           schema.nodos.nombre,
+                ubicacion:            schema.nodos.ubicacion,
+                descripcionNodo:      schema.nodos.descripcion,
+                nombreModelo:         schema.generadoresModelos.nombre,
+                marca:                schema.generadoresModelos.marca,
+                capacidadGasolina:    schema.generadoresModelos.capacidadGasolina,
+                consumoGasolinaHoras: schema.generadoresModelos.consumoGasolinaHoras,
+                descripcionModelo:    schema.generadoresModelos.descripcion,
             })
             .from(schema.generadores)
             .innerJoin(schema.nodos,              eq(schema.generadores.idNodo,   schema.nodos.idNodo))
@@ -140,7 +138,6 @@ router.post('/generar', verificarToken, async (req, res) => {
             ))
             .orderBy(asc(schema.sesionesOperacion.inicio));
 
-        // Todos los mantenimientos del período sin filtro de tipo
         const mantenimientos = await db.select().from(schema.mantenimientos)
             .where(and(
                 eq(schema.mantenimientos.idGenerador, idGenerador),
@@ -158,24 +155,22 @@ router.post('/generar', verificarToken, async (req, res) => {
         // ── 3. Estadísticas ──────────────────────────────────────────────────
         const segundosTotalesPeriodo = sesiones.reduce((acc, s) => acc + parseFloat(s.horasSesion || 0), 0);
 
-        // Conteo y litros por cada tipo de mantenimiento
         const conteosPorTipo = {};
         const litrosPorTipo  = {};
 
         for (const t of TIPOS_MANTENIMIENTO) {
             const delTipo = mantenimientos.filter(m => m.tipo === t);
             conteosPorTipo[t] = delTipo.length;
-            // Solo para tipos con litros
             if (t === 'gasolina') {
                 litrosPorTipo[t] = delTipo.reduce((acc, m) => acc + parseFloat(m.cantidadLitros || 0), 0);
             }
         }
 
-        const totalMantenimientos    = mantenimientos.length;
-        const sesionesAutomaticas    = sesiones.filter(s => s.tipoInicio.toLowerCase() === 'automatico').length;
-        const sesionesManuales       = sesiones.filter(s => s.tipoInicio.toLowerCase() === 'manual').length;
-        const duracionPromedio       = sesiones.length > 0 ? Math.round(segundosTotalesPeriodo / sesiones.length) : 0;
-        const sesionMasLarga         = sesiones.reduce((max, s) => {
+        const totalMantenimientos = mantenimientos.length;
+        const sesionesAutomaticas = sesiones.filter(s => s.tipoInicio.toLowerCase() === 'automatico').length;
+        const sesionesManuales    = sesiones.filter(s => s.tipoInicio.toLowerCase() === 'manual').length;
+        const duracionPromedio    = sesiones.length > 0 ? Math.round(segundosTotalesPeriodo / sesiones.length) : 0;
+        const sesionMasLarga      = sesiones.reduce((max, s) => {
             const segs = parseFloat(s.horasSesion || 0);
             return segs > max ? segs : max;
         }, 0);
@@ -193,7 +188,6 @@ router.post('/generar', verificarToken, async (req, res) => {
             manual:     items.filter(s => s.tipoInicio.toLowerCase() === 'manual').length,
         }));
 
-        // Agrupa mantenimientos por mes para cada tipo
         const mantenimientosPorMes = {};
         for (const t of TIPOS_MANTENIMIENTO) {
             const delTipo = mantenimientos.filter(m => m.tipo === t);
@@ -207,7 +201,6 @@ router.post('/generar', verificarToken, async (req, res) => {
             }
         }
 
-        // Retrocompatibilidad: mantener gasolinaPorMes y aceitePorMes como antes
         const gasolinaPorMes = mantenimientosPorMes['gasolina'] ?? [];
         const aceitePorMes   = mantenimientosPorMes['aceite']   ?? [];
 
@@ -272,28 +265,7 @@ router.post('/generar', verificarToken, async (req, res) => {
             });
         }
 
-        // ── 6. Proyección próximo mantenimiento ──────────────────────────────
-        const intervaloCambioAceiteHoras = parseInt(gen.intervaloCambioAceite || 0);
-        const horasActuales              = parseFloat(gen.horasTotalesAcum || 0) / 3600;
-        let proximoMantenimiento         = null;
-
-        if (intervaloCambioAceiteHoras > 0 && horasActuales > 0) {
-            const ciclosCompletos    = Math.floor(horasActuales / intervaloCambioAceiteHoras);
-            const horasProximoCambio = (ciclosCompletos + 1) * intervaloCambioAceiteHoras;
-            const horasRestantes     = horasProximoCambio - horasActuales;
-
-            const diasPeriodo   = Math.max((hastaDate - desdeDate) / (1000 * 60 * 60 * 24), 1);
-            const consumoDiario = sesiones.length > 0 ? (segundosTotalesPeriodo / 3600) / diasPeriodo : 0;
-            const diasRestantes = consumoDiario > 0 ? Math.ceil(horasRestantes / consumoDiario) : null;
-
-            proximoMantenimiento = {
-                horasProximoCambio: parseFloat(horasProximoCambio.toFixed(1)),
-                horasRestantes:     parseFloat(horasRestantes.toFixed(1)),
-                diasRestantes,
-            };
-        }
-
-        // ── 7. Línea de tiempo ───────────────────────────────────────────────
+        // ── 6. Línea de tiempo ───────────────────────────────────────────────
         const timeline = [
             ...sesiones.map(s => ({
                 tipo:        'encendido',
@@ -321,7 +293,7 @@ router.post('/generar', verificarToken, async (req, res) => {
             })),
         ].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
 
-        // ── 8. Objeto de datos completo ──────────────────────────────────────
+        // ── 7. Objeto de datos completo ──────────────────────────────────────
         const datos = {
             generador: {
                 idGenerador:          gen.idGenerador,
@@ -334,27 +306,24 @@ router.post('/generar', verificarToken, async (req, res) => {
                 gasolinaActualLitros: parseFloat(parseFloat(gen.gasolinaActualLitros || 0).toFixed(2)),
                 creadoEn:             gen.creadoEn,
                 modelo: {
-                    nombre:                gen.nombreModelo,
-                    marca:                 gen.marca,
-                    capacidadGasolina:     parseFloat(gen.capacidadGasolina),
-                    consumoGasolinaHoras:  parseFloat(gen.consumoGasolinaHoras),
-                    intervaloCambioAceite: parseInt(gen.intervaloCambioAceite),
-                    descripcion:           gen.descripcionModelo,
+                    nombre:               gen.nombreModelo,
+                    marca:                gen.marca,
+                    capacidadGasolina:    parseFloat(gen.capacidadGasolina),
+                    consumoGasolinaHoras: parseFloat(gen.consumoGasolinaHoras),
+                    descripcion:          gen.descripcionModelo,
                 },
             },
             timeline,
             estadisticas: {
-                totalSesiones:           sesiones.length,
-                horasTotalesPeriodo:     Math.round(segundosTotalesPeriodo),
+                totalSesiones:          sesiones.length,
+                horasTotalesPeriodo:    Math.round(segundosTotalesPeriodo),
                 duracionPromedio,
-                sesionMasLarga:          Math.round(sesionMasLarga),
+                sesionMasLarga:         Math.round(sesionMasLarga),
                 sesionesAutomaticas,
                 sesionesManuales,
                 totalMantenimientos,
-                // Conteos individuales por tipo
-                conteosPorTipo,           // { gasolina: 3, aceite: 1, bateria: 0, ... }
-                litrosTotalesRecargados:  (litrosPorTipo['gasolina'] ?? 0).toFixed(2),
-                // Retrocompat
+                conteosPorTipo,
+                litrosTotalesRecargados: (litrosPorTipo['gasolina'] ?? 0).toFixed(2),
                 cambiosAceite:    conteosPorTipo['aceite']   ?? 0,
                 recargasGasolina: conteosPorTipo['gasolina'] ?? 0,
                 totalAlertas:     alertas.length,
@@ -362,14 +331,13 @@ router.post('/generar', verificarToken, async (req, res) => {
             },
             graficos: {
                 sesionesPorMes,
-                gasolinaPorMes,      // retrocompat
-                aceitePorMes,        // retrocompat
-                mantenimientosPorMes, // nuevo: todos los tipos por mes
-                grupoFiltros:  grupoFiltrosData,   
-                grupoMotor:    grupoMotorData,     
-                grupoElectric: grupoElectricData,  
+                gasolinaPorMes,
+                aceitePorMes,
+                mantenimientosPorMes,
+                grupoFiltros:  grupoFiltrosData,
+                grupoMotor:    grupoMotorData,
+                grupoElectric: grupoElectricData,
                 horasAcumuladas,
-                proximoMantenimiento,
             },
         };
 
@@ -391,6 +359,7 @@ router.post('/generar', verificarToken, async (req, res) => {
         });
 
         res.status(201).json({ success: true, data: reporte[0] });
+        //console.log(reporte[0]);
     } catch (error) {
         console.error(error);
         res.status(500).json({ success: false, error: 'Error al generar reporte' });
