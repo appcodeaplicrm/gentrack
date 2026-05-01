@@ -67,6 +67,16 @@ async function getHorasUltimoMant(idGenerador, tipo) {
     };
 }
 
+// Helper: segundos → "hh:mm:ss"
+const segundosAHHMMSS = (segundos) => {
+    if (!segundos) return '00:00:00';
+    const s = Math.round(Number(segundos));
+    const hh = String(Math.floor(s / 3600)).padStart(2, '0');
+    const mm = String(Math.floor((s % 3600) / 60)).padStart(2, '0');
+    const ss = String(s % 60).padStart(2, '0');
+    return `${hh}:${mm}:${ss}`;
+};
+
 // ── GET /proximos ─────────────────────────────────────────────────────────────
 router.get('/proximos', verificarToken, async (req, res) => {
     try {
@@ -645,7 +655,11 @@ router.post('/', verificarToken, requiereRol('tecnico_abastecimiento', 'tecnico_
                 metadata:   { horasAlMomento, notas },
             });
 
-            await notificar(NOTIF.CAMBIO_ACEITE_REGISTRADO, { genId, nodo, horasAlMomento });
+            await notificar(NOTIF.CAMBIO_ACEITE_REGISTRADO, { 
+                genId, 
+                nodo, 
+                horasAlMomento: segundosAHHMMSS(horasAlMomento) 
+            });
         }
 
         if (tipo === 'encendido') {
