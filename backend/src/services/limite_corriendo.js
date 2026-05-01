@@ -36,6 +36,14 @@ async function crearAlertaCorrida(idGenerador, genId, horasCorriendo) {
     return true;
 }
 
+const horasAHHMM = (horas) => {
+    if (!horas) return '00:00';
+    const totalMin = Math.round(horas * 60);
+    const hh = String(Math.floor(totalMin / 60)).padStart(2, '0');
+    const mm = String(totalMin % 60).padStart(2, '0');
+    return `${hh}:${mm}`;
+};
+
 async function crearAlertaGasolina(idGenerador, genId, minutosRestantes) {
     const existente = await db.select()
         .from(schema.alertas)
@@ -90,10 +98,10 @@ async function apagarGeneradorAutomaticamente(idGenerador, genId, tuyaDeviceId, 
             idGenerador,
             genId,
             nodo,
-            horasCorriendo: horasSesion.toFixed(1),
+            horasCorriendo: horasAHHMM(horasSesion),
         });
 
-        console.log(`${tag('pink', 'CORRIDA')} Apagado automático ejecutado — ${genId} (${horasSesion.toFixed(1)}h)`);
+        console.log(`${tag('pink', 'CORRIDA')} Apagado automático ejecutado — ${genId} (${horasAHHMM(horasSesion)})`);
     } catch (err) {
         console.error(`${tag('pink', 'CORRIDA')} Error al apagar ${genId}:`, err.message);
     }
@@ -191,7 +199,7 @@ async function verificarCorridaExcesiva() {
                 ? (ahora - new Date(gen.encendidoEn)) / (1000 * 60 * 60)
                 : LIMITE_HORAS_CORRIDA;
 
-            console.warn(`${tag('pink', 'CORRIDA')} ${gen.genId} lleva ${horasCorriendo.toFixed(1)}h — apagando automáticamente`);
+            console.warn(`${tag('pink', 'CORRIDA')} ${gen.genId} lleva ${horasAHHMM(horasCorriendo)}h — apagando automáticamente`);
 
             await apagarGeneradorAutomaticamente(gen.idGenerador, gen.genId, gen.tuyaDeviceId, gen.nodo);
             await crearAlertaCorrida(gen.idGenerador, gen.genId, horasCorriendo);

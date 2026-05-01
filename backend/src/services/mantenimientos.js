@@ -33,6 +33,15 @@ function umbralAceite(esNuevo, cambiosIniciales) {
     return UMBRALES_ACEITE_NUEVO[cambiosIniciales] ?? INTERVALO_ACEITE_NORMAL;
 }
 
+// ── HELPER: horas decimales → "hh:mm" ────────────────────────────────────────
+const horasAHHMM = (horas) => {
+    if (!horas) return '00:00';
+    const totalMin = Math.round(horas * 60);
+    const hh = String(Math.floor(totalMin / 60)).padStart(2, '0');
+    const mm = String(totalMin % 60).padStart(2, '0');
+    return `${hh}:${mm}`;
+};
+
 // ── ETIQUETAS DESCRIPTIVAS ────────────────────────────────────────────────────
 export const ETIQUETAS_MANTENIMIENTO = {
     aceite: {
@@ -159,7 +168,7 @@ async function verificarMantenimientoPorHoras(gen, horasActuales, tipo, interval
     const horasFaltan = Math.max(0, intervaloHoras - horasDesde);
     const etiqueta    = ETIQUETAS_MANTENIMIENTO[tipo];
 
-    console.log(`${tag('amber', tipo.toUpperCase())} ${gen.genId} — horasActuales: ${horasActuales.toFixed(2)}h | horasUltimo: ${horasUltimo.toFixed(2)}h | horasDesde: ${horasDesde.toFixed(2)}h | horasFaltan: ${horasFaltan.toFixed(2)}h`);
+    console.log(`${tag('amber', tipo.toUpperCase())} ${gen.genId} — horasActuales: ${horasAHHMM(horasActuales)} | horasUltimo: ${horasAHHMM(horasUltimo)} | horasDesde: ${horasAHHMM(horasDesde)} | horasFaltan: ${horasAHHMM(horasFaltan)}`);
 
     if (horasFaltan > AVISO_HORAS_PENDIENTE) return;
 
@@ -169,7 +178,7 @@ async function verificarMantenimientoPorHoras(gen, horasActuales, tipo, interval
             genId:       gen.genId,
             tipo,
             titulo:      etiqueta.accion,
-            mensaje:     `${gen.genId}: ${etiqueta.accion} — faltan ${horasFaltan.toFixed(0)}h`,
+            mensaje:     `${gen.genId}: ${etiqueta.accion} — faltan ${horasAHHMM(horasFaltan)}`,
             prioridad:   'media',
             grupoDestino,
         });
@@ -182,7 +191,7 @@ async function verificarMantenimientoPorHoras(gen, horasActuales, tipo, interval
             genId:       gen.genId,
             tipo,
             titulo:      etiqueta.accion,
-            mensaje:     `${gen.genId}: ${etiqueta.accion} — faltan ${horasFaltan.toFixed(0)}h`,
+            mensaje:     `${gen.genId}: ${etiqueta.accion} — faltan ${horasAHHMM(horasFaltan)}`,
             prioridad:   'alta',
             grupoDestino,
         });
@@ -205,8 +214,8 @@ async function verificarMantenimientoPorHoras(gen, horasActuales, tipo, interval
 
     if (creado) {
         const mensaje = horasFaltan <= 0
-            ? `${gen.genId}: ${etiqueta.urgente} (${Math.round(horasDesde)}h desde el último)`
-            : `${gen.genId}: ${etiqueta.accion} — faltan ${horasFaltan.toFixed(0)}h`;
+            ? `${gen.genId}: ${etiqueta.urgente} (${horasAHHMM(horasDesde)} desde el último)`
+            : `${gen.genId}: ${etiqueta.accion} — faltan ${horasAHHMM(horasFaltan)}`;
 
         await notificar(NOTIF.MANTENIMIENTO_PENDIENTE, {
             idGenerador: gen.idGenerador,
@@ -233,7 +242,6 @@ async function verificarMantenimientoPorDias(gen, tipo, intervaloDias, grupoDest
     const msFaltan    = Math.max(0, INTERVALO_MS - msPasados);
     const diasFaltan  = Math.round(msFaltan / (24 * 60 * 60 * 1000));
 
-    // Bateria → blue, filtro_aire → amber
     const colorDias = tipo === 'bateria' ? 'blue' : 'amber';
     console.log(`${tag(colorDias, tipo.toUpperCase())} ${gen.genId} — diasFaltan: ${diasFaltan} | fechaUltimo: ${fechaUltimo}`);
 
@@ -375,8 +383,6 @@ async function verificarAceite(gen, horasActuales) {
 
     const horasUltimo = await getHorasUltimoMantenimiento(gen.idGenerador, 'aceite');
 
-    // Para generador nuevo los umbrales son absolutos (10h, 25h, 50h...)
-    // Para generador normal se mide desde el último cambio
     const horasDesde  = esNuevo ? horasActuales : horasActuales - horasUltimo;
     const horasFaltan = Math.max(0, umbral - horasDesde);
 
@@ -384,7 +390,7 @@ async function verificarAceite(gen, horasActuales) {
         ? `Rodaje #${cambiosIniciales + 1} — a las ${umbral}h`
         : `Cada ${INTERVALO_ACEITE_NORMAL}h de uso`;
 
-    console.log(`${tag('teal', 'ACEITE')} ${gen.genId} — esNuevo: ${esNuevo} | cambios: ${cambiosIniciales} | umbral: ${umbral}h | horasDesde: ${horasDesde.toFixed(2)}h | horasFaltan: ${horasFaltan.toFixed(2)}h`);
+    console.log(`${tag('teal', 'ACEITE')} ${gen.genId} — esNuevo: ${esNuevo} | cambios: ${cambiosIniciales} | umbral: ${umbral}h | horasDesde: ${horasAHHMM(horasDesde)} | horasFaltan: ${horasAHHMM(horasFaltan)}`);
 
     if (horasFaltan > AVISO_ACEITE_HORAS) return;
 
@@ -408,7 +414,7 @@ async function verificarAceite(gen, horasActuales) {
         const titulo  = horasFaltan <= 0 ? etiqueta.urgente : etiqueta.accion;
         const mensaje = horasFaltan <= 0
             ? `${gen.genId}: ${etiqueta.urgente} — ${labelUmbral}`
-            : `${gen.genId}: ${etiqueta.accion} — ${labelUmbral}, faltan ${horasFaltan.toFixed(0)}h`;
+            : `${gen.genId}: ${etiqueta.accion} — ${labelUmbral}, faltan ${horasAHHMM(horasFaltan)}`;
 
         await notificar(NOTIF.MANTENIMIENTO_PENDIENTE, {
             idGenerador:  gen.idGenerador,
@@ -488,7 +494,7 @@ async function enviarRecordatoriosPendientes() {
             } else if (p.metadatos?.horasFaltan != null) {
                 detalle = p.metadatos.horasFaltan <= 0
                     ? ` — vencido`
-                    : ` — faltan ${Number(p.metadatos.horasFaltan).toFixed(0)}h`;
+                    : ` — faltan ${horasAHHMM(Number(p.metadatos.horasFaltan))}`;
             } else if (p.metadatos?.diasFaltan != null) {
                 detalle = p.metadatos.diasFaltan <= 0
                     ? ` — vencido`
